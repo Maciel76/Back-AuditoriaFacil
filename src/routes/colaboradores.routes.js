@@ -1,28 +1,34 @@
-import { Router } from 'express';
-import { z } from 'zod';
-import { Colaborador } from '../models/Colaborador.js';
-import { Usuario, ROLES } from '../models/Usuario.js';
-import { autenticar, escopoLoja, exigirEscopoLoja, exigirRole } from '../middlewares/auth.js';
-import { autenticarColaborador } from '../middlewares/authColaborador.js';
-import { uploadAvatar } from '../middlewares/upload.js';
-import { asyncHandler, httpError } from '../utils/http.js';
-import { verificarToken } from '../utils/jwt.js';
-import fs from 'node:fs';
-import path from 'node:path';
+import { Router } from "express";
+import { z } from "zod";
+import { Colaborador } from "../models/Colaborador.js";
+import { Usuario, ROLES } from "../models/Usuario.js";
+import {
+  autenticar,
+  escopoLoja,
+  exigirEscopoLoja,
+  exigirRole,
+} from "../middlewares/auth.js";
+import { autenticarColaborador } from "../middlewares/authColaborador.js";
+import { uploadAvatar } from "../middlewares/upload.js";
+import { asyncHandler, httpError } from "../utils/http.js";
+import { verificarToken } from "../utils/jwt.js";
+import fs from "node:fs";
+import path from "node:path";
 
 const router = Router();
 
 function autenticarAdminOuColaborador(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return next(httpError(401, 'Token ausente'));
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return next(httpError(401, "Token ausente"));
 
   try {
     const payload = verificarToken(token);
-    if (payload.tipo === 'colaborador') return autenticarColaborador(req, res, next);
+    if (payload.tipo === "colaborador")
+      return autenticarColaborador(req, res, next);
     return autenticar(req, res, next);
   } catch {
-    return next(httpError(401, 'Token inválido'));
+    return next(httpError(401, "Token inválido"));
   }
 }
 
@@ -30,17 +36,19 @@ function autenticarAdminOuColaborador(req, res, next) {
 
 /** Perfil próprio do colaborador (sem lojaId, apenas com token de portal) */
 router.get(
-  '/portal/me',
+  "/portal/me",
   autenticarColaborador,
   asyncHandler(async (req, res) => {
-    const colab = await Colaborador.findById(req.colaborador._id).populate('loja', 'nome slug codigo').lean();
-    if (!colab) throw httpError(404, 'Colaborador não encontrado');
+    const colab = await Colaborador.findById(req.colaborador._id)
+      .populate("loja", "nome slug codigo cidade estado avatarUrl")
+      .lean();
+    if (!colab) throw httpError(404, "Colaborador não encontrado");
     res.json(colab);
-  })
+  }),
 );
 
 router.post(
-  '/portal/password',
+  "/portal/password",
   autenticarColaborador,
   asyncHandler(async (req, res) => {
     const { senhaAtual, novaSenha } = z
@@ -50,67 +58,85 @@ router.post(
       })
       .parse(req.body);
 
-    const colab = await Colaborador.findById(req.colaborador._id).select('+senhaHash');
-    if (!colab || !colab.ativo) throw httpError(404, 'Colaborador não encontrado');
-    if (!colab.senhaHash) throw httpError(400, 'Senha ainda não configurada');
+    const colab = await Colaborador.findById(req.colaborador._id).select(
+      "+senhaHash",
+    );
+    if (!colab || !colab.ativo)
+      throw httpError(404, "Colaborador não encontrado");
+    if (!colab.senhaHash) throw httpError(400, "Senha ainda não configurada");
 
     const ok = await colab.checarSenha(senhaAtual);
-    if (!ok) throw httpError(400, 'Senha atual incorreta');
+    if (!ok) throw httpError(400, "Senha atual incorreta");
 
     colab.senhaHash = await Colaborador.hashSenha(novaSenha);
     colab.primeiroAcesso = false;
     await colab.save();
 
     res.json({ ok: true });
-  })
+  }),
 );
 
 /** Upload de avatar (colaborador ou admin) */
 router.post(
-  '/:id/avatar',
+  "/:id/avatar",
   autenticarAdminOuColaborador,
-  uploadAvatar.single('avatar'),
+  uploadAvatar.single("avatar"),
   asyncHandler(async (req, res) => {
-    if (!req.file) throw httpError(400, 'Imagem obrigatória');
+    if (!req.file) throw httpError(400, "Imagem obrigatória");
     const colab = await Colaborador.findById(req.params.id);
-    if (!colab) throw httpError(404, 'Colaborador não encontrado');
+    if (!colab) throw httpError(404, "Colaborador não encontrado");
 
     if (req.colaborador && String(req.colaborador._id) !== String(colab._id)) {
-      throw httpError(403, 'Você só pode alterar sua própria foto');
+      throw httpError(403, "Você só pode alterar sua própria foto");
     }
 
-    if (req.usuario?.role === ROLES.COLABORADOR && String(req.usuario.colaborador || '') !== String(colab._id)) {
-      throw httpError(403, 'Você só pode alterar sua própria foto');
+    if (
+      req.usuario?.role === ROLES.COLABORADOR &&
+      String(req.usuario.colaborador || "") !== String(colab._id)
+    ) {
+      throw httpError(403, "Você só pode alterar sua própria foto");
     }
 
     if (colab.avatarUrl) {
-      const old = path.resolve('uploads', 'avatares', path.basename(colab.avatarUrl));
+      const old = path.resolve(
+        "uploads",
+        "avatares",
+        path.basename(colab.avatarUrl),
+      );
       if (fs.existsSync(old)) fs.unlinkSync(old);
     }
 
     colab.avatarUrl = `/uploads/avatares/${req.file.filename}`;
     await colab.save();
     res.json({ avatarUrl: colab.avatarUrl });
-  })
+  }),
 );
 
 router.use(autenticar);
 
 router.get(
-  '/',
+  "/",
   escopoLoja,
   exigirEscopoLoja,
   asyncHandler(async (req, res) => {
     const { q, page = 1, limit = 50 } = req.query;
     const filtro = { loja: req.escopoLojaId };
-    if (q) filtro.$or = [{ nome: new RegExp(q, 'i') }, { codigoExterno: new RegExp(q, 'i') }];
+    if (q)
+      filtro.$or = [
+        { nome: new RegExp(q, "i") },
+        { codigoExterno: new RegExp(q, "i") },
+      ];
     const skip = (Number(page) - 1) * Number(limit);
     const [items, total] = await Promise.all([
-      Colaborador.find(filtro).sort({ pontuacao: -1, nome: 1 }).skip(skip).limit(Number(limit)).lean(),
+      Colaborador.find(filtro)
+        .sort({ pontuacao: -1, nome: 1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
       Colaborador.countDocuments(filtro),
     ]);
     res.json({ items, total, page: Number(page), limit: Number(limit) });
-  })
+  }),
 );
 
 const createSchema = z.object({
@@ -123,21 +149,25 @@ const createSchema = z.object({
 const updateSchema = createSchema.partial();
 
 router.post(
-  '/',
+  "/",
   escopoLoja,
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const exists = await Colaborador.findOne({ loja: req.escopoLojaId, codigoExterno: data.codigoExterno });
-    if (exists) throw httpError(409, 'Já existe colaborador com esse código nesta loja');
+    const exists = await Colaborador.findOne({
+      loja: req.escopoLojaId,
+      codigoExterno: data.codigoExterno,
+    });
+    if (exists)
+      throw httpError(409, "Já existe colaborador com esse código nesta loja");
     const c = await Colaborador.create({ ...data, loja: req.escopoLojaId });
     res.status(201).json(c);
-  })
+  }),
 );
 
 router.put(
-  '/:id',
+  "/:id",
   escopoLoja,
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
@@ -146,36 +176,44 @@ router.put(
     const c = await Colaborador.findOneAndUpdate(
       { _id: req.params.id, loja: req.escopoLojaId },
       { $set: data },
-      { new: true }
+      { new: true },
     );
-    if (!c) throw httpError(404, 'Colaborador não encontrado');
+    if (!c) throw httpError(404, "Colaborador não encontrado");
     res.json(c);
-  })
+  }),
 );
 
 router.delete(
-  '/:id',
+  "/:id",
   escopoLoja,
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
-    throw httpError(403, 'Exclusão de colaboradores está desabilitada');
-  })
+    throw httpError(403, "Exclusão de colaboradores está desabilitada");
+  }),
 );
 
 // Vincular conta de usuário a um colaborador
 router.post(
-  '/:id/usuario',
+  "/:id/usuario",
   escopoLoja,
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
     const { email, senha, nome } = z
-      .object({ email: z.string().email(), senha: z.string().min(6), nome: z.string().min(2).optional() })
+      .object({
+        email: z.string().email(),
+        senha: z.string().min(6),
+        nome: z.string().min(2).optional(),
+      })
       .parse(req.body);
-    const colab = await Colaborador.findOne({ _id: req.params.id, loja: req.escopoLojaId });
-    if (!colab) throw httpError(404, 'Colaborador não encontrado');
-    if (await Usuario.findOne({ email: email.toLowerCase() })) throw httpError(409, 'E-mail já em uso');
+    const colab = await Colaborador.findOne({
+      _id: req.params.id,
+      loja: req.escopoLojaId,
+    });
+    if (!colab) throw httpError(404, "Colaborador não encontrado");
+    if (await Usuario.findOne({ email: email.toLowerCase() }))
+      throw httpError(409, "E-mail já em uso");
     const senhaHash = await Usuario.hashSenha(senha);
     const usuario = await Usuario.create({
       nome: nome || colab.nome,
@@ -188,7 +226,7 @@ router.post(
     colab.usuario = usuario._id;
     await colab.save();
     res.status(201).json({ usuario, colaborador: colab });
-  })
+  }),
 );
 
 export default router;
