@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 export const TIPOS_AUDITORIA = Object.freeze({
-  ETIQUETA: 'ETIQUETA',
-  PRESENCA: 'PRESENCA',
-  RUPTURA: 'RUPTURA',
+  ETIQUETA: "ETIQUETA",
+  PRESENCA: "PRESENCA",
+  RUPTURA: "RUPTURA",
 });
 
 /**
@@ -11,11 +11,15 @@ export const TIPOS_AUDITORIA = Object.freeze({
  */
 const AuditoriaSchema = new mongoose.Schema(
   {
-    loja: { type: mongoose.Schema.Types.ObjectId, ref: 'Loja', required: true },
-    tipo: { type: String, enum: Object.values(TIPOS_AUDITORIA), required: true },
+    loja: { type: mongoose.Schema.Types.ObjectId, ref: "Loja", required: true },
+    tipo: {
+      type: String,
+      enum: Object.values(TIPOS_AUDITORIA),
+      required: true,
+    },
     data: { type: Date, required: true }, // dia da auditoria (00:00 UTC do dia detectado)
     arquivoOriginal: String,
-    enviadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario' },
+    enviadoPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
 
     // Resumo
     totalItens: { type: Number, default: 0 },
@@ -31,7 +35,10 @@ const AuditoriaSchema = new mongoose.Schema(
     // Top colaboradores deste upload (snapshot rápido)
     topColaboradores: [
       {
-        colaborador: { type: mongoose.Schema.Types.ObjectId, ref: 'Colaborador' },
+        colaborador: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Colaborador",
+        },
         nome: String,
         codigoExterno: String,
         itens: Number,
@@ -39,12 +46,19 @@ const AuditoriaSchema = new mongoose.Schema(
         pontuacao: Number,
       },
     ],
-    status: { type: String, enum: ['PROCESSANDO', 'CONCLUIDA', 'ERRO'], default: 'PROCESSANDO' },
+    status: {
+      type: String,
+      enum: ["PROCESSANDO", "CONCLUIDA", "ERRO", "CANCELADA"],
+      default: "PROCESSANDO",
+    },
     erro: String,
+    canceladaEm: Date,
+    canceladaPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
+    motivoCancelamento: { type: String, default: "" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 AuditoriaSchema.index({ loja: 1, tipo: 1, data: 1 }, { unique: true });
 
-export const Auditoria = mongoose.model('Auditoria', AuditoriaSchema);
+export const Auditoria = mongoose.model("Auditoria", AuditoriaSchema);

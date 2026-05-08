@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 /**
  * Métrica diária consolidada por loja+tipo (e opcionalmente por colaborador).
@@ -6,8 +6,18 @@ import mongoose from 'mongoose';
  */
 const MetricaDiariaSchema = new mongoose.Schema(
   {
-    loja: { type: mongoose.Schema.Types.ObjectId, ref: 'Loja', required: true, index: true },
-    colaborador: { type: mongoose.Schema.Types.ObjectId, ref: 'Colaborador', index: true, default: null },
+    loja: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Loja",
+      required: true,
+      index: true,
+    },
+    colaborador: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Colaborador",
+      index: true,
+      default: null,
+    },
     tipo: { type: String, required: true, index: true },
     data: { type: Date, required: true, index: true }, // 00:00 UTC do dia
 
@@ -20,10 +30,20 @@ const MetricaDiariaSchema = new mongoose.Schema(
     pontuacao: { type: Number, default: 0 },
     custoRuptura: { type: Number, default: 0 },
     situacoes: { type: Map, of: Number, default: {} },
+    cancelada: { type: Boolean, default: false, index: true },
+    canceladaEm: Date,
+    canceladaPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
+    motivoCancelamento: { type: String, default: "" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-MetricaDiariaSchema.index({ loja: 1, tipo: 1, data: 1, colaborador: 1 }, { unique: true });
+MetricaDiariaSchema.index(
+  { loja: 1, tipo: 1, data: 1, colaborador: 1 },
+  { unique: true },
+);
 
-export const MetricaDiaria = mongoose.model('MetricaDiaria', MetricaDiariaSchema);
+export const MetricaDiaria = mongoose.model(
+  "MetricaDiaria",
+  MetricaDiariaSchema,
+);

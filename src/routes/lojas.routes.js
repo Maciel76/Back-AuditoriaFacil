@@ -119,6 +119,7 @@ function resumoPeriodoVazio() {
     custoRuptura: 0,
     taxaConformidade: 0,
     ultimaAuditoriaEm: null,
+    ultimaAuditoria: null,
     porTipo: Object.fromEntries(
       Object.values(TIPOS_AUDITORIA).map((tipo) => [tipo, resumoTipoVazio()]),
     ),
@@ -144,8 +145,13 @@ function calcularTaxaTipo(tipo, resumo) {
 function finalizarResumoPeriodo(resumo) {
   for (const tipo of Object.values(TIPOS_AUDITORIA)) {
     resumo.porTipo[tipo].pontuacao = arredondar(resumo.porTipo[tipo].pontuacao);
-    resumo.porTipo[tipo].custoRuptura = arredondar(resumo.porTipo[tipo].custoRuptura);
-    resumo.porTipo[tipo].taxaConformidade = calcularTaxaTipo(tipo, resumo.porTipo[tipo]);
+    resumo.porTipo[tipo].custoRuptura = arredondar(
+      resumo.porTipo[tipo].custoRuptura,
+    );
+    resumo.porTipo[tipo].taxaConformidade = calcularTaxaTipo(
+      tipo,
+      resumo.porTipo[tipo],
+    );
   }
 
   const etiqueta = resumo.porTipo[TIPOS_AUDITORIA.ETIQUETA];
@@ -163,9 +169,8 @@ function finalizarResumoPeriodo(resumo) {
   ).length;
   resumo.pontuacao = arredondar(resumo.pontuacao);
   resumo.custoRuptura = arredondar(resumo.custoRuptura);
-  resumo.taxaConformidade = denominador > 0
-    ? arredondar((numerador / denominador) * 100)
-    : 0;
+  resumo.taxaConformidade =
+    denominador > 0 ? arredondar((numerador / denominador) * 100) : 0;
 
   return resumo;
 }
@@ -215,47 +220,82 @@ router.get(
       match: matchPeriodoBase,
     });
 
-    const [metricasPorTipo, auditoriasPorTipo] = await Promise.all([
-      MetricaDiaria.aggregate([
-        {
-          $match: {
-            ...matchPeriodoBase,
-            data: { $gte: inicio, $lte: fim },
+    const [metricasPorTipo, auditoriasPorTipo, ultimasAuditorias] =
+      await Promise.all([
+        MetricaDiaria.aggregate([
+          {
+            $match: {
+              ...matchPeriodoBase,
+              cancelada: { $ne: true },
+              data: { $gte: inicio, $lte: fim },
+            },
           },
-        },
-        {
-          $group: {
-            _id: { loja: "$loja", tipo: "$tipo" },
-            totalItens: { $sum: "$totalItens" },
-            totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
-            totalLidos: { $sum: "$totalLidos" },
-            totalConformes: { $sum: "$totalConformes" },
-            totalNaoConformes: { $sum: "$totalNaoConformes" },
-            pontuacao: { $sum: "$pontuacao" },
-            custoRuptura: { $sum: "$custoRuptura" },
+          {
+            $group: {
+              _id: { loja: "$loja", tipo: "$tipo" },
+              totalItens: { $sum: "$totalItens" },
+              totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
+              totalLidos: { $sum: "$totalLidos" },
+              totalConformes: { $sum: "$totalConformes" },
+              totalNaoConformes: { $sum: "$totalNaoConformes" },
+              pontuacao: { $sum: "$pontuacao" },
+              custoRuptura: { $sum: "$custoRuptura" },
+            },
           },
-        },
-      ]),
-      Auditoria.aggregate([
-        {
-          $match: {
-            loja: { $in: lojaIds },
-            data: { $gte: inicio, $lte: fim },
+        ]),
+        Auditoria.aggregate([
+          {
+            $match: {
+              loja: { $in: lojaIds },
+              data: { $gte: inicio, $lte: fim },
+              status: { $ne: "CANCELADA" },
+            },
           },
-        },
-        {
-          $group: {
-            _id: { loja: "$loja", tipo: "$tipo" },
-            totalAuditorias: { $sum: 1 },
-            ultimaAuditoriaEm: { $max: "$data" },
+          {
+            $group: {
+              _id: { loja: "$loja", tipo: "$tipo" },
+              totalAuditorias: { $sum: 1 },
+              ultimaAuditoriaEm: { $max: "$data" },
+            },
           },
-        },
-      ]),
-    ]);
+        ]),
+        Auditoria.aggregate([
+          {
+            $match: {
+              loja: { $in: lojaIds },
+              data: { $gte: inicio, $lte: fim },
+              status: { $ne: "CANCELADA" },
+            },
+          },
+          { $sort: { loja: 1, data: -1, createdAt: -1 } },
+          {
+            $group: {
+              _id: "$loja",
+              auditoria: {
+                $first: {
+                  _id: "$_id",
+                  tipo: "$tipo",
+                  data: "$data",
+                  status: "$status",
+                },
+              },
+            },
+          },
+        ]),
+      ]);
 
     const resumosPorLoja = new Map(
       lojas.map((loja) => [String(loja._id), resumoPeriodoVazio()]),
     );
+
+    for (const linha of ultimasAuditorias) {
+      const lojaId = String(linha._id);
+      const resumo = resumosPorLoja.get(lojaId);
+      if (!resumo) continue;
+      resumo.ultimaAuditoria = linha.auditoria || null;
+      if (linha.auditoria?.data)
+        resumo.ultimaAuditoriaEm = linha.auditoria.data;
+    }
 
     for (const linha of metricasPorTipo) {
       const lojaId = String(linha._id.loja);
@@ -265,7 +305,9 @@ router.get(
 
       const tipoResumo = resumo.porTipo[tipo];
       tipoResumo.totalItens += Number(linha.totalItens || 0);
-      tipoResumo.totalItensAuditaveis += Number(linha.totalItensAuditaveis || 0);
+      tipoResumo.totalItensAuditaveis += Number(
+        linha.totalItensAuditaveis || 0,
+      );
       tipoResumo.totalLidos += Number(linha.totalLidos || 0);
       tipoResumo.totalConformes += Number(linha.totalConformes || 0);
       tipoResumo.totalNaoConformes += Number(linha.totalNaoConformes || 0);
@@ -293,7 +335,8 @@ router.get(
 
       if (
         linha.ultimaAuditoriaEm &&
-        (!resumo.ultimaAuditoriaEm || linha.ultimaAuditoriaEm > resumo.ultimaAuditoriaEm)
+        (!resumo.ultimaAuditoriaEm ||
+          linha.ultimaAuditoriaEm > resumo.ultimaAuditoriaEm)
       ) {
         resumo.ultimaAuditoriaEm = linha.ultimaAuditoriaEm;
       }

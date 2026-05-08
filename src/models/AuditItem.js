@@ -1,9 +1,19 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const AuditItemSchema = new mongoose.Schema(
   {
-    auditoria: { type: mongoose.Schema.Types.ObjectId, ref: 'Auditoria', required: true, index: true },
-    loja: { type: mongoose.Schema.Types.ObjectId, ref: 'Loja', required: true, index: true },
+    auditoria: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Auditoria",
+      required: true,
+      index: true,
+    },
+    loja: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Loja",
+      required: true,
+      index: true,
+    },
     tipo: { type: String, required: true, index: true },
     data: { type: Date, required: true, index: true },
 
@@ -14,7 +24,11 @@ const AuditItemSchema = new mongoose.Schema(
     setor: String,
     local: String,
 
-    colaborador: { type: mongoose.Schema.Types.ObjectId, ref: 'Colaborador', index: true },
+    colaborador: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Colaborador",
+      index: true,
+    },
     colaboradorCodigo: String,
     colaboradorNome: String,
 
@@ -34,11 +48,12 @@ const AuditItemSchema = new mongoose.Schema(
     // Resultado da regra
     conforme: { type: Boolean, index: true },
     pontos: { type: Number, default: 0 },
+    cancelada: { type: Boolean, default: false, index: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 AuditItemSchema.index({ loja: 1, tipo: 1, data: -1 });
 AuditItemSchema.index({ loja: 1, colaborador: 1, data: -1 });
 
-export const AuditItem = mongoose.model('AuditItem', AuditItemSchema);
+export const AuditItem = mongoose.model("AuditItem", AuditItemSchema);
