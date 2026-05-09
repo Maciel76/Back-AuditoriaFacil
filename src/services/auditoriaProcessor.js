@@ -7,6 +7,7 @@ import { Loja } from "../models/Loja.js";
 import { lerPlanilha } from "./planilhaParser.js";
 import { classificar, REGRAS } from "./regras.js";
 import { avaliarConquistas } from "./conquistasService.js";
+import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
 import { zerarMetricasCanceladas } from "./auditoriaCancelamento.js";
 
 function reportProgress(onProgress, progress, stage) {
@@ -334,6 +335,11 @@ export async function processarPlanilha({
   );
   reportProgress(onProgress, 84, "Atualizando métricas");
 
+  const itensParticipacaoLojaAtual = totalLidos;
+  const itensParticipacaoLojaAnterior = Number(
+    prevLojaMetrica?.totalLidos || 0,
+  );
+
   // Métrica diária por colaborador
   const colaboradoresMetricas = [...porColaborador.values()];
   const passoMetricas = Math.max(
@@ -382,6 +388,10 @@ export async function processarPlanilha({
     const c = colaboradoresAcumulados[index];
     const colab = await Colaborador.findById(c.colaborador);
     if (!colab) continue;
+    const metricasPorTipo = normalizarMetricasPorTipo(colab.metricasPorTipo);
+    colab.totalItensParticipacaoLoja = Number(
+      colab.totalItensParticipacaoLoja || 0,
+    );
 
     if (isReUpload) {
       const prev = prevColabMetricasMap.get(String(c.colaborador));
@@ -399,18 +409,37 @@ export async function processarPlanilha({
           0,
           Number((colab.pontuacao - (prev.pontuacao || 0)).toFixed(2)),
         );
+        colab.totalItensParticipacaoLoja = Math.max(
+          0,
+          colab.totalItensParticipacaoLoja - itensParticipacaoLojaAnterior,
+        );
+        metricasPorTipo[tipo].totalItensLidos = Math.max(
+          0,
+          metricasPorTipo[tipo].totalItensLidos - (prev.totalLidos || 0),
+        );
+        metricasPorTipo[tipo].totalItensConformes = Math.max(
+          0,
+          metricasPorTipo[tipo].totalItensConformes -
+            (prev.totalConformes || 0),
+        );
         // totalAuditorias não muda: dia já foi contabilizado antes
       } else {
         // Colaborador novo neste re-upload: conta a participação
         colab.totalAuditorias += 1;
+        metricasPorTipo[tipo].totalAuditorias += 1;
       }
     } else {
       colab.totalAuditorias += 1;
+      metricasPorTipo[tipo].totalAuditorias += 1;
     }
 
     colab.totalItensLidos += c.itens;
     colab.totalItensConformes += c.conformes;
     colab.pontuacao = Number((colab.pontuacao + c.pontuacao).toFixed(2));
+    colab.totalItensParticipacaoLoja += itensParticipacaoLojaAtual;
+    metricasPorTipo[tipo].totalItensLidos += c.itens;
+    metricasPorTipo[tipo].totalItensConformes += c.conformes;
+    colab.metricasPorTipo = metricasPorTipo;
     colab.nivel = calcNivel(colab.pontuacao);
     await avaliarConquistas(colab);
     colab.nivel = calcNivel(colab.pontuacao);
@@ -433,6 +462,12 @@ export async function processarPlanilha({
       if (!novoColabIds.has(colabIdStr)) {
         const colab = await Colaborador.findById(colabIdStr);
         if (colab) {
+          const metricasPorTipo = normalizarMetricasPorTipo(
+            colab.metricasPorTipo,
+          );
+          colab.totalItensParticipacaoLoja = Number(
+            colab.totalItensParticipacaoLoja || 0,
+          );
           colab.totalItensLidos = Math.max(
             0,
             colab.totalItensLidos - (prev.totalLidos || 0),
@@ -446,6 +481,26 @@ export async function processarPlanilha({
             Number((colab.pontuacao - (prev.pontuacao || 0)).toFixed(2)),
           );
           colab.totalAuditorias = Math.max(0, colab.totalAuditorias - 1);
+          colab.totalItensParticipacaoLoja = Math.max(
+            0,
+            colab.totalItensParticipacaoLoja - itensParticipacaoLojaAnterior,
+          );
+          metricasPorTipo[tipo].totalItensLidos = Math.max(
+            0,
+            metricasPorTipo[tipo].totalItensLidos - (prev.totalLidos || 0),
+          );
+          metricasPorTipo[tipo].totalItensConformes = Math.max(
+            0,
+            metricasPorTipo[tipo].totalItensConformes -
+              (prev.totalConformes || 0),
+          );
+          metricasPorTipo[tipo].totalAuditorias = Math.max(
+            0,
+            metricasPorTipo[tipo].totalAuditorias - 1,
+          );
+          colab.metricasPorTipo = metricasPorTipo;
+          colab.nivel = calcNivel(colab.pontuacao);
+          await avaliarConquistas(colab);
           colab.nivel = calcNivel(colab.pontuacao);
           await colab.save();
         }

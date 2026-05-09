@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { TIPOS_AUDITORIA } from "./Auditoria.js";
 
 /**
  * Definição mestre de uma conquista do sistema de gamificação.
@@ -23,6 +24,7 @@ export const METRICAS_SUPORTADAS = [
   "totalItensLidos",
   "totalItensConformes",
   "totalAuditorias",
+  "totalItensParticipacaoLoja",
   "taxaConformidadeAcumulada",
   "pontuacao",
   "nivel",
@@ -36,6 +38,8 @@ export const CATEGORIAS = [
   "NIVEL",
   "ESPECIAL",
 ];
+
+export const TIPOS_AUDITORIA_CONQUISTA = Object.values(TIPOS_AUDITORIA);
 
 const TierSchema = new mongoose.Schema(
   {
@@ -56,6 +60,11 @@ const ConquistaSchema = new mongoose.Schema(
     cor: { type: String, default: "" },
     categoria: { type: String, enum: CATEGORIAS, default: "ESPECIAL" },
     metricaBase: { type: String, enum: METRICAS_SUPORTADAS, required: true },
+    tipoAuditoria: {
+      type: String,
+      enum: TIPOS_AUDITORIA_CONQUISTA,
+      default: null,
+    },
     operador: { type: String, enum: ["gte"], default: "gte" },
     recorrente: { type: Boolean, default: false },
     tiers: { type: [TierSchema], default: [] },

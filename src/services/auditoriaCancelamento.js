@@ -5,6 +5,7 @@ import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { MetricaDiaria } from "../models/MetricaDiaria.js";
 import { avaliarConquistas } from "./conquistasService.js";
+import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
 
 function calcNivel(pontuacao) {
   return Math.max(1, Math.floor(Number(pontuacao || 0) / 500) + 1);
@@ -34,14 +35,85 @@ export async function recomputarAcumuladosLoja(lojaId) {
       },
     },
     {
+      $lookup: {
+        from: MetricaDiaria.collection.name,
+        let: { loja: "$loja", tipo: "$tipo", data: "$data" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$loja", "$$loja"] },
+                  { $eq: ["$tipo", "$$tipo"] },
+                  { $eq: ["$data", "$$data"] },
+                  { $eq: ["$colaborador", null] },
+                  { $ne: ["$cancelada", true] },
+                ],
+              },
+            },
+          },
+          { $project: { totalLidos: 1 } },
+        ],
+        as: "metricaLojaParticipacao",
+      },
+    },
+    {
+      $addFields: {
+        itensParticipacaoLoja: {
+          $ifNull: [
+            { $arrayElemAt: ["$metricaLojaParticipacao.totalLidos", 0] },
+            0,
+          ],
+        },
+      },
+    },
+    {
       $group: {
         _id: "$colaborador",
-        totalAuditorias: {
-          $sum: { $cond: [{ $gt: ["$totalLidos", 0] }, 1, 0] },
-        },
+        totalAuditorias: { $sum: 1 },
         totalItensLidos: { $sum: "$totalLidos" },
         totalItensConformes: { $sum: "$totalConformes" },
+        totalItensParticipacaoLoja: { $sum: "$itensParticipacaoLoja" },
         pontuacao: { $sum: "$pontuacao" },
+        auditoriasEtiqueta: {
+          $sum: { $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, 1, 0] },
+        },
+        auditoriasPresenca: {
+          $sum: { $cond: [{ $eq: ["$tipo", "PRESENCA"] }, 1, 0] },
+        },
+        auditoriasRuptura: {
+          $sum: { $cond: [{ $eq: ["$tipo", "RUPTURA"] }, 1, 0] },
+        },
+        itensLidosEtiqueta: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, "$totalLidos", 0],
+          },
+        },
+        itensLidosPresenca: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "PRESENCA"] }, "$totalLidos", 0],
+          },
+        },
+        itensLidosRuptura: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "RUPTURA"] }, "$totalLidos", 0],
+          },
+        },
+        itensConformesEtiqueta: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, "$totalConformes", 0],
+          },
+        },
+        itensConformesPresenca: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "PRESENCA"] }, "$totalConformes", 0],
+          },
+        },
+        itensConformesRuptura: {
+          $sum: {
+            $cond: [{ $eq: ["$tipo", "RUPTURA"] }, "$totalConformes", 0],
+          },
+        },
       },
     },
   ]);
@@ -58,6 +130,26 @@ export async function recomputarAcumuladosLoja(lojaId) {
     colaborador.totalItensConformes = Number(
       agregado?.totalItensConformes || 0,
     );
+    colaborador.totalItensParticipacaoLoja = Number(
+      agregado?.totalItensParticipacaoLoja || 0,
+    );
+    colaborador.metricasPorTipo = normalizarMetricasPorTipo({
+      ETIQUETA: {
+        totalAuditorias: agregado?.auditoriasEtiqueta || 0,
+        totalItensLidos: agregado?.itensLidosEtiqueta || 0,
+        totalItensConformes: agregado?.itensConformesEtiqueta || 0,
+      },
+      PRESENCA: {
+        totalAuditorias: agregado?.auditoriasPresenca || 0,
+        totalItensLidos: agregado?.itensLidosPresenca || 0,
+        totalItensConformes: agregado?.itensConformesPresenca || 0,
+      },
+      RUPTURA: {
+        totalAuditorias: agregado?.auditoriasRuptura || 0,
+        totalItensLidos: agregado?.itensLidosRuptura || 0,
+        totalItensConformes: agregado?.itensConformesRuptura || 0,
+      },
+    });
     colaborador.pontuacao = Number(Number(agregado?.pontuacao || 0).toFixed(2));
     colaborador.conquistas = [];
     colaborador.nivel = calcNivel(colaborador.pontuacao);

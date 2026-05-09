@@ -6,6 +6,7 @@ import {
   TIER_INFO,
   METRICAS_SUPORTADAS,
   CATEGORIAS,
+  TIPOS_AUDITORIA_CONQUISTA,
 } from "../models/Conquista.js";
 import { Colaborador } from "../models/Colaborador.js";
 import { autenticar, exigirRole } from "../middlewares/auth.js";
@@ -43,6 +44,7 @@ router.get(
       tiers: TIERS.map((nivel) => ({ nivel, ...TIER_INFO[nivel] })),
       categorias: CATEGORIAS,
       metricas: METRICAS_SUPORTADAS,
+      tiposAuditoria: TIPOS_AUDITORIA_CONQUISTA,
     });
   }),
 );
@@ -68,7 +70,10 @@ router.get(
     if (req.query.ativa === "true") filtro.ativa = true;
     if (req.query.ativa === "false") filtro.ativa = false;
     if (req.query.categoria) filtro.categoria = req.query.categoria;
-    const items = await Conquista.find(filtro).sort({ ordem: 1, nome: 1 }).lean();
+    if (req.query.tipoAuditoria) filtro.tipoAuditoria = req.query.tipoAuditoria;
+    const items = await Conquista.find(filtro)
+      .sort({ ordem: 1, nome: 1 })
+      .lean();
     res.json({ items, tiers: TIERS, tiersInfo: TIER_INFO });
   }),
 );
@@ -96,6 +101,7 @@ const baseSchema = z.object({
   cor: z.string().max(32).optional().default(""),
   categoria: z.enum(CATEGORIAS),
   metricaBase: z.enum(METRICAS_SUPORTADAS),
+  tipoAuditoria: z.enum(TIPOS_AUDITORIA_CONQUISTA).nullable().optional(),
   recorrente: z.boolean().optional().default(false),
   tiers: z.array(tierSchema).min(1),
   ativa: z.boolean().optional().default(true),

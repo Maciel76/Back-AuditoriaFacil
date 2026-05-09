@@ -5,7 +5,7 @@ import { Conquista } from "../models/Conquista.js";
  * estiver vazia. Após o primeiro arranque o SUPER_ADMIN gerencia tudo
  * pelo painel /admin/conquistas.
  */
-const PADRAO = [
+export const CONQUISTAS_PADRAO = [
   {
     codigo: "ITENS_LIDOS",
     nome: "Caçador de Itens",
@@ -111,12 +111,229 @@ const PADRAO = [
       { nivel: "mitico", meta: 30000, xpBonus: 1500, titulo: "Sentinela" },
     ],
   },
+  {
+    codigo: "ETIQUETA_ITENS",
+    nome: "Radar da Etiqueta",
+    descricao:
+      "Leia itens nas auditorias de ETIQUETA e evolua seus marcos nesse tipo específico.",
+    icone: "🏷️",
+    categoria: "ITENS",
+    metricaBase: "totalItensLidos",
+    tipoAuditoria: "ETIQUETA",
+    recorrente: true,
+    ordem: 7,
+    tiers: [
+      { nivel: "comum", meta: 50, xpBonus: 15, titulo: "Primeiras Etiquetas" },
+      { nivel: "raro", meta: 250, xpBonus: 45, titulo: "Leitura Fina" },
+      { nivel: "epico", meta: 1000, xpBonus: 120, titulo: "Scanner Afiado" },
+      {
+        nivel: "lendario",
+        meta: 5000,
+        xpBonus: 320,
+        titulo: "Mestre da Gôndola",
+      },
+      {
+        nivel: "mitico",
+        meta: 20000,
+        xpBonus: 900,
+        titulo: "Lenda da Etiqueta",
+      },
+    ],
+  },
+  {
+    codigo: "ETIQUETA_AUDITORIAS",
+    nome: "Ritmo da Etiqueta",
+    descricao:
+      "Acumule auditorias do tipo ETIQUETA e avance nos tiers desse circuito.",
+    icone: "🧾",
+    categoria: "AUDITORIAS",
+    metricaBase: "totalAuditorias",
+    tipoAuditoria: "ETIQUETA",
+    recorrente: true,
+    ordem: 8,
+    tiers: [
+      { nivel: "comum", meta: 1, xpBonus: 10, titulo: "Primeira Etiqueta" },
+      { nivel: "raro", meta: 8, xpBonus: 35, titulo: "Compasso Firme" },
+      { nivel: "epico", meta: 25, xpBonus: 100, titulo: "Batida Constante" },
+      {
+        nivel: "lendario",
+        meta: 80,
+        xpBonus: 260,
+        titulo: "Veterano de Etiqueta",
+      },
+      { nivel: "mitico", meta: 200, xpBonus: 700, titulo: "Mito da Etiqueta" },
+    ],
+  },
+  {
+    codigo: "PRESENCA_ITENS",
+    nome: "Guardião da Presença",
+    descricao:
+      "Leia itens nas auditorias de PRESENCA e evolua seu domínio nesse fluxo.",
+    icone: "👀",
+    categoria: "ITENS",
+    metricaBase: "totalItensLidos",
+    tipoAuditoria: "PRESENCA",
+    recorrente: true,
+    ordem: 9,
+    tiers: [
+      { nivel: "comum", meta: 50, xpBonus: 15, titulo: "Olhar Atento" },
+      { nivel: "raro", meta: 300, xpBonus: 50, titulo: "Presença Marcada" },
+      { nivel: "epico", meta: 1200, xpBonus: 130, titulo: "Cobertura Viva" },
+      {
+        nivel: "lendario",
+        meta: 6000,
+        xpBonus: 340,
+        titulo: "Sentinela do Salão",
+      },
+      {
+        nivel: "mitico",
+        meta: 25000,
+        xpBonus: 950,
+        titulo: "Lenda da Presença",
+      },
+    ],
+  },
+  {
+    codigo: "PRESENCA_AUDITORIAS",
+    nome: "Cadência da Presença",
+    descricao:
+      "Acumule auditorias do tipo PRESENCA e consolide experiência nesse tipo específico.",
+    icone: "📍",
+    categoria: "AUDITORIAS",
+    metricaBase: "totalAuditorias",
+    tipoAuditoria: "PRESENCA",
+    recorrente: true,
+    ordem: 10,
+    tiers: [
+      { nivel: "comum", meta: 1, xpBonus: 10, titulo: "Primeira Presença" },
+      { nivel: "raro", meta: 6, xpBonus: 35, titulo: "Pulso Operacional" },
+      { nivel: "epico", meta: 20, xpBonus: 95, titulo: "Compromisso Total" },
+      {
+        nivel: "lendario",
+        meta: 60,
+        xpBonus: 240,
+        titulo: "Veterano da Presença",
+      },
+      { nivel: "mitico", meta: 160, xpBonus: 650, titulo: "Mito da Presença" },
+    ],
+  },
+  {
+    codigo: "RUPTURA_ITENS",
+    nome: "Caçador de Rupturas",
+    descricao:
+      "Leia itens nas auditorias de RUPTURA e suba de tier enfrentando os cenários mais críticos.",
+    icone: "🚨",
+    categoria: "ITENS",
+    metricaBase: "totalItensLidos",
+    tipoAuditoria: "RUPTURA",
+    recorrente: true,
+    ordem: 11,
+    tiers: [
+      { nivel: "comum", meta: 40, xpBonus: 20, titulo: "Primeiros Alertas" },
+      { nivel: "raro", meta: 180, xpBonus: 55, titulo: "Foco Crítico" },
+      { nivel: "epico", meta: 800, xpBonus: 140, titulo: "Linha Vermelha" },
+      {
+        nivel: "lendario",
+        meta: 4000,
+        xpBonus: 360,
+        titulo: "Guardião da Ruptura",
+      },
+      {
+        nivel: "mitico",
+        meta: 15000,
+        xpBonus: 1000,
+        titulo: "Lenda da Ruptura",
+      },
+    ],
+  },
+  {
+    codigo: "RUPTURA_AUDITORIAS",
+    nome: "Pulso da Ruptura",
+    descricao:
+      "Acumule auditorias do tipo RUPTURA e prove consistência nas leituras mais sensíveis.",
+    icone: "⛑️",
+    categoria: "AUDITORIAS",
+    metricaBase: "totalAuditorias",
+    tipoAuditoria: "RUPTURA",
+    recorrente: true,
+    ordem: 12,
+    tiers: [
+      { nivel: "comum", meta: 1, xpBonus: 10, titulo: "Primeira Ruptura" },
+      { nivel: "raro", meta: 5, xpBonus: 30, titulo: "Resposta Rápida" },
+      { nivel: "epico", meta: 16, xpBonus: 90, titulo: "Operação Sensível" },
+      {
+        nivel: "lendario",
+        meta: 45,
+        xpBonus: 230,
+        titulo: "Veterano da Ruptura",
+      },
+      { nivel: "mitico", meta: 120, xpBonus: 620, titulo: "Mito da Ruptura" },
+    ],
+  },
+  {
+    codigo: "PARTICIPACAO_LOJA",
+    nome: "Força-Tarefa da Loja",
+    descricao:
+      "Evolua conforme participa de auditorias e soma os itens lidos da loja apenas nos dias e tipos em que você realmente esteve presente.",
+    icone: "🤝",
+    categoria: "ESPECIAL",
+    metricaBase: "totalItensParticipacaoLoja",
+    recorrente: true,
+    ordem: 13,
+    tiers: [
+      { nivel: "comum", meta: 10000, xpBonus: 20, titulo: "Participação 10k" },
+      { nivel: "raro", meta: 50000, xpBonus: 60, titulo: "Participação 50k" },
+      {
+        nivel: "epico",
+        meta: 100000,
+        xpBonus: 160,
+        titulo: "Participação 100k",
+      },
+      {
+        nivel: "lendario",
+        meta: 250000,
+        xpBonus: 420,
+        titulo: "Participação 250k",
+      },
+      {
+        nivel: "mitico",
+        meta: 1000000,
+        xpBonus: 1200,
+        titulo: "Participação 1M",
+      },
+    ],
+  },
 ];
 
 export async function semearConquistasSeNecessario() {
   const total = await Conquista.countDocuments();
   if (total > 0) return { criadas: 0, ignoradas: total };
-  await Conquista.insertMany(PADRAO);
-  console.log(`[bootstrap] ${PADRAO.length} conquistas padrão criadas`);
-  return { criadas: PADRAO.length, ignoradas: 0 };
+  await Conquista.insertMany(CONQUISTAS_PADRAO);
+  console.log(
+    `[bootstrap] ${CONQUISTAS_PADRAO.length} conquistas padrão criadas`,
+  );
+  return { criadas: CONQUISTAS_PADRAO.length, ignoradas: 0 };
+}
+
+export async function sincronizarConquistasPadrao() {
+  const existentes = await Conquista.find({}, { codigo: 1 }).lean();
+  const codigosExistentes = new Set(existentes.map((item) => item.codigo));
+  const faltantes = CONQUISTAS_PADRAO.filter(
+    (item) => !codigosExistentes.has(item.codigo),
+  );
+
+  if (!faltantes.length) {
+    return {
+      criadas: 0,
+      ignoradas: CONQUISTAS_PADRAO.length,
+      codigosCriados: [],
+    };
+  }
+
+  await Conquista.insertMany(faltantes);
+  return {
+    criadas: faltantes.length,
+    ignoradas: CONQUISTAS_PADRAO.length - faltantes.length,
+    codigosCriados: faltantes.map((item) => item.codigo),
+  };
 }

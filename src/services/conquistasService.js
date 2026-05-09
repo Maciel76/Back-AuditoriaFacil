@@ -1,4 +1,5 @@
 import { Conquista, TIER_INFO } from "../models/Conquista.js";
+import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
 
 let cacheConquistas = null;
 let cacheCarregadoEm = 0;
@@ -8,7 +9,9 @@ async function carregarConquistasAtivas() {
   const agora = Date.now();
   if (cacheConquistas && agora - cacheCarregadoEm < CACHE_TTL_MS)
     return cacheConquistas;
-  cacheConquistas = await Conquista.find({ ativa: true }).sort({ ordem: 1 }).lean();
+  cacheConquistas = await Conquista.find({ ativa: true })
+    .sort({ ordem: 1 })
+    .lean();
   cacheCarregadoEm = agora;
   return cacheConquistas;
 }
@@ -18,17 +21,28 @@ export function invalidarCacheConquistas() {
   cacheCarregadoEm = 0;
 }
 
-function lerMetrica(colab, nome) {
+function lerMetrica(colab, nome, tipoAuditoria = null) {
+  const metricasPorTipo = tipoAuditoria
+    ? normalizarMetricasPorTipo(colab.metricasPorTipo)
+    : null;
+  const metricaTipo = tipoAuditoria ? metricasPorTipo[tipoAuditoria] : null;
+
   switch (nome) {
     case "totalItensLidos":
-      return colab.totalItensLidos || 0;
+      return metricaTipo?.totalItensLidos ?? (colab.totalItensLidos || 0);
     case "totalItensConformes":
-      return colab.totalItensConformes || 0;
+      return (
+        metricaTipo?.totalItensConformes ?? (colab.totalItensConformes || 0)
+      );
     case "totalAuditorias":
-      return colab.totalAuditorias || 0;
+      return metricaTipo?.totalAuditorias ?? (colab.totalAuditorias || 0);
+    case "totalItensParticipacaoLoja":
+      return colab.totalItensParticipacaoLoja || 0;
     case "taxaConformidadeAcumulada": {
-      const lidos = colab.totalItensLidos || 0;
-      const conformes = colab.totalItensConformes || 0;
+      const lidos =
+        metricaTipo?.totalItensLidos ?? (colab.totalItensLidos || 0);
+      const conformes =
+        metricaTipo?.totalItensConformes ?? (colab.totalItensConformes || 0);
       return lidos > 0 ? (conformes / lidos) * 100 : 0;
     }
     case "pontuacao":
@@ -54,6 +68,10 @@ function tierMaisAlto(tiersOrdenados, valor) {
   return { alcancado, desbloqueados };
 }
 
+function ordenarHistoricoPorTier(a, b) {
+  return (TIER_INFO[a.nivel]?.ordem || 0) - (TIER_INFO[b.nivel]?.ordem || 0);
+}
+
 /**
  * Avalia todas as conquistas ativas para um colaborador, atualizando
  * `colab.conquistas` in place. Retorna um array de eventos com as
@@ -71,24 +89,38 @@ export async function avaliarConquistas(colab) {
   const novaLista = [];
   let bonusXp = 0;
   for (const def of definicoes) {
-    const tiersOrdenados = [...(def.tiers || [])].sort((a, b) => a.meta - b.meta);
+    const tiersOrdenados = [...(def.tiers || [])].sort(
+      (a, b) => a.meta - b.meta,
+    );
     if (!tiersOrdenados.length) continue;
 
-    const valor = lerMetrica(colab, def.metricaBase);
+    const valor = lerMetrica(colab, def.metricaBase, def.tipoAuditoria);
     const { alcancado, desbloqueados } = tierMaisAlto(tiersOrdenados, valor);
+    const agora = new Date();
 
     const atual = mapaAtual.get(def.codigo);
     const tiersAntes = new Set(atual?.tiersDesbloqueados || []);
     const novosTiers = desbloqueados.filter((n) => !tiersAntes.has(n));
+    const historicoPorNivel = new Map(
+      (atual?.historicoDesbloqueios || []).map((item) => [item.nivel, item]),
+    );
 
     for (const nivel of novosTiers) {
       const tierDef = tiersOrdenados.find((t) => t.nivel === nivel);
       if (!tierDef) continue;
       bonusXp += tierDef.xpBonus || 0;
+      historicoPorNivel.set(nivel, {
+        nivel,
+        desbloqueadoEm: agora,
+        meta: tierDef.meta,
+        xpBonus: tierDef.xpBonus || 0,
+        titulo: tierDef.titulo || "",
+      });
       eventos.push({
         codigo: def.codigo,
         nome: def.nome,
         icone: def.icone,
+        tipoAuditoria: def.tipoAuditoria || null,
         tier: nivel,
         tierLabel: TIER_INFO[nivel]?.label || nivel,
         titulo: tierDef.titulo || def.nome,
@@ -97,15 +129,32 @@ export async function avaliarConquistas(colab) {
       });
     }
 
+    const historicoDesbloqueios = desbloqueados
+      .map((nivel) => {
+        const tierDef = tiersOrdenados.find((t) => t.nivel === nivel);
+        const historico = historicoPorNivel.get(nivel);
+        return {
+          nivel,
+          desbloqueadoEm:
+            historico?.desbloqueadoEm || atual?.desbloqueadaEm || agora,
+          meta: historico?.meta ?? tierDef?.meta ?? 0,
+          xpBonus: historico?.xpBonus ?? tierDef?.xpBonus ?? 0,
+          titulo: historico?.titulo || tierDef?.titulo || "",
+        };
+      })
+      .sort(ordenarHistoricoPorTier);
+
     novaLista.push({
       codigo: def.codigo,
       tierAtual: alcancado?.nivel || null,
       tiersDesbloqueados: desbloqueados,
+      historicoDesbloqueios,
       progresso: Number(valor.toFixed ? valor.toFixed(2) : valor),
       desbloqueadaEm:
+        historicoDesbloqueios[0]?.desbloqueadoEm ||
         atual?.desbloqueadaEm ||
-        (alcancado ? new Date() : undefined),
-      ultimaAtualizacao: new Date(),
+        (alcancado ? agora : undefined),
+      ultimaAtualizacao: agora,
     });
   }
 
@@ -129,11 +178,27 @@ export async function resolverConquistasPortal(colab) {
   for (const c of colab.conquistas || []) mapa.set(c.codigo, c);
 
   return definicoes.map((def) => {
-    const tiersOrdenados = [...(def.tiers || [])].sort((a, b) => a.meta - b.meta);
+    const tiersOrdenados = [...(def.tiers || [])].sort(
+      (a, b) => a.meta - b.meta,
+    );
     const estado = mapa.get(def.codigo);
-    const valor = estado?.progresso ?? lerMetrica(colab, def.metricaBase);
+    const valor =
+      estado?.progresso ??
+      lerMetrica(colab, def.metricaBase, def.tipoAuditoria);
     const tierAtualNivel = estado?.tierAtual || null;
     const desbloqueados = new Set(estado?.tiersDesbloqueados || []);
+    const historicoBase = estado?.historicoDesbloqueios?.length
+      ? estado.historicoDesbloqueios
+      : tiersOrdenados
+          .filter((t) => desbloqueados.has(t.nivel))
+          .map((t) => ({
+            nivel: t.nivel,
+            desbloqueadoEm:
+              estado?.desbloqueadaEm || estado?.ultimaAtualizacao || null,
+            meta: t.meta,
+            xpBonus: t.xpBonus || 0,
+            titulo: t.titulo || "",
+          }));
 
     const tierAtualDef = tierAtualNivel
       ? tiersOrdenados.find((t) => t.nivel === tierAtualNivel)
@@ -162,6 +227,7 @@ export async function resolverConquistasPortal(colab) {
       icone: def.icone,
       categoria: def.categoria,
       metricaBase: def.metricaBase,
+      tipoAuditoria: def.tipoAuditoria || null,
       recorrente: def.recorrente,
       tiers: tiersOrdenados.map((t) => ({
         nivel: t.nivel,
@@ -173,9 +239,7 @@ export async function resolverConquistasPortal(colab) {
         desbloqueado: desbloqueados.has(t.nivel),
       })),
       tierAtual: tierAtualNivel,
-      tierAtualLabel: tierAtualNivel
-        ? TIER_INFO[tierAtualNivel]?.label
-        : null,
+      tierAtualLabel: tierAtualNivel ? TIER_INFO[tierAtualNivel]?.label : null,
       tierAtualCor: tierAtualNivel ? TIER_INFO[tierAtualNivel]?.cor : null,
       proximoTier: proximoTierDef
         ? {
@@ -191,6 +255,36 @@ export async function resolverConquistasPortal(colab) {
       desbloqueada: !!tierAtualNivel,
       totalTiersDesbloqueados: desbloqueados.size,
       totalTiers: tiersOrdenados.length,
+      historicoDesbloqueios: historicoBase
+        .filter((item) => desbloqueados.has(item.nivel))
+        .sort((a, b) => {
+          const dataA = a.desbloqueadoEm
+            ? new Date(a.desbloqueadoEm).getTime()
+            : 0;
+          const dataB = b.desbloqueadoEm
+            ? new Date(b.desbloqueadoEm).getTime()
+            : 0;
+          if (dataA !== dataB) return dataB - dataA;
+          return (
+            (TIER_INFO[b.nivel]?.ordem || 0) - (TIER_INFO[a.nivel]?.ordem || 0)
+          );
+        })
+        .map((item) => {
+          const tierDef = tiersOrdenados.find((t) => t.nivel === item.nivel);
+          return {
+            nivel: item.nivel,
+            label: TIER_INFO[item.nivel]?.label || item.nivel,
+            cor: TIER_INFO[item.nivel]?.cor,
+            meta: item.meta ?? tierDef?.meta ?? 0,
+            xpBonus: item.xpBonus ?? tierDef?.xpBonus ?? 0,
+            titulo: item.titulo || tierDef?.titulo || "",
+            desbloqueadoEm:
+              item.desbloqueadoEm ||
+              estado?.desbloqueadaEm ||
+              estado?.ultimaAtualizacao ||
+              null,
+          };
+        }),
       desbloqueadaEm: estado?.desbloqueadaEm || null,
       ultimaAtualizacao: estado?.ultimaAtualizacao || null,
     };

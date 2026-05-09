@@ -19,45 +19,22 @@
  *   node --env-file=.env scripts/recompute-acumulados.js
  *   node --env-file=.env scripts/recompute-acumulados.js --dry-run
  */
-import 'dotenv/config';
-import mongoose from 'mongoose';
+import "dotenv/config";
+import mongoose from "mongoose";
 
-import { connectDB } from '../src/config/db.js';
-import { Auditoria } from '../src/models/Auditoria.js';
-import { AuditItem } from '../src/models/AuditItem.js';
-import { MetricaDiaria } from '../src/models/MetricaDiaria.js';
-import { Colaborador } from '../src/models/Colaborador.js';
-import { Loja } from '../src/models/Loja.js';
-import { classificar } from '../src/services/regras.js';
+import { connectDB } from "../src/config/db.js";
+import { Auditoria } from "../src/models/Auditoria.js";
+import { AuditItem } from "../src/models/AuditItem.js";
+import { MetricaDiaria } from "../src/models/MetricaDiaria.js";
+import { Colaborador } from "../src/models/Colaborador.js";
+import { Loja } from "../src/models/Loja.js";
+import { avaliarConquistas } from "../src/services/conquistasService.js";
+import { normalizarMetricasPorTipo } from "../src/services/colaboradorMetricas.js";
+import { classificar } from "../src/services/regras.js";
 
-const DRY_RUN = process.argv.includes('--dry-run');
-
-const CONQUISTAS = [
-  { codigo: 'PRIMEIRA_AUDITORIA', nome: 'Primeira Auditoria', cond: (c) => c.totalAuditorias >= 1 },
-  { codigo: 'CEM_LIDOS', nome: '100 Itens Lidos', cond: (c) => c.totalItensLidos >= 100 },
-  { codigo: 'MIL_LIDOS', nome: '1.000 Itens Lidos', cond: (c) => c.totalItensLidos >= 1000 },
-  { codigo: 'DEZ_MIL_LIDOS', nome: '10.000 Itens Lidos', cond: (c) => c.totalItensLidos >= 10000 },
-  { codigo: 'CONFORMIDADE_95', nome: 'Mestre da Conformidade', cond: (c) => c.totalItensLidos >= 200 && c.totalItensConformes / Math.max(1, c.totalItensLidos) >= 0.95 },
-  { codigo: 'NIVEL_5', nome: 'Auditor Veterano', cond: (c) => c.nivel >= 5 },
-];
+const DRY_RUN = process.argv.includes("--dry-run");
 
 const calcNivel = (pontuacao) => Math.max(1, Math.floor(pontuacao / 500) + 1);
-
-function recalcConquistas(colab) {
-  const novas = [];
-  const atuais = new Map((colab.conquistas || []).map((c) => [c.codigo, c]));
-  for (const c of CONQUISTAS) {
-    if (c.cond(colab)) {
-      const existing = atuais.get(c.codigo);
-      novas.push({
-        codigo: c.codigo,
-        nome: c.nome,
-        conquistadaEm: existing?.conquistadaEm || new Date(),
-      });
-    }
-  }
-  return novas;
-}
 
 const stats = {
   duplicatasMescladas: 0,
@@ -68,18 +45,28 @@ const stats = {
 };
 
 async function passo1_mesclarAuditoriasDuplicadas() {
-  console.log('\n[1] Detectando Auditorias duplicadas por (loja, tipo, dia)...');
+  console.log(
+    "\n[1] Detectando Auditorias duplicadas por (loja, tipo, dia)...",
+  );
   const grupos = await Auditoria.aggregate([
-    { $group: {
-        _id: { loja: '$loja', tipo: '$tipo', data: '$data' },
-        ids: { $push: { _id: '$_id', updatedAt: '$updatedAt', createdAt: '$createdAt' } },
+    {
+      $group: {
+        _id: { loja: "$loja", tipo: "$tipo", data: "$data" },
+        ids: {
+          $push: {
+            _id: "$_id",
+            updatedAt: "$updatedAt",
+            createdAt: "$createdAt",
+          },
+        },
         n: { $sum: 1 },
-    } },
+      },
+    },
     { $match: { n: { $gt: 1 } } },
   ]);
 
   if (grupos.length === 0) {
-    console.log('    Nenhuma duplicata encontrada.');
+    console.log("    Nenhuma duplicata encontrada.");
     return;
   }
 
@@ -106,11 +93,11 @@ async function passo1_mesclarAuditoriasDuplicadas() {
 }
 
 async function passo2_reconstruirMetricaDiaria() {
-  console.log('\n[2] Reconstruindo MetricaDiaria a partir de AuditItem...');
+  console.log("\n[2] Reconstruindo MetricaDiaria a partir de AuditItem...");
 
   // Pega todas as combinacoes existentes em AuditItem
   const grupos = await AuditItem.aggregate([
-    { $group: { _id: { loja: '$loja', tipo: '$tipo', data: '$data' } } },
+    { $group: { _id: { loja: "$loja", tipo: "$tipo", data: "$data" } } },
   ]);
 
   console.log(`    ${grupos.length} (loja, tipo, dia) com itens.`);
@@ -131,18 +118,20 @@ async function passo2_reconstruirMetricaDiaria() {
     // ----------------------------------------------------------------
     const porSituacao = await AuditItem.aggregate([
       { $match: match },
-      { $group: {
-          _id: '$situacao',
+      {
+        $group: {
+          _id: "$situacao",
           count: { $sum: 1 },
-          pontuacao: { $sum: { $ifNull: ['$pontos', 0] } },
-          custoRuptura: { $sum: { $ifNull: ['$custoRuptura', 0] } },
-      } },
+          pontuacao: { $sum: { $ifNull: ["$pontos", 0] } },
+          custoRuptura: { $sum: { $ifNull: ["$custoRuptura", 0] } },
+        },
+      },
     ]);
 
     const situacoesMap = {};
     let totalItens = 0;
     let totalItensAuditaveis = 0; // conforme != null (exclui 'Sem Estoque')
-    let totalLidos = 0;           // conta:true (itens fisicamente lidos)
+    let totalLidos = 0; // conta:true (itens fisicamente lidos)
     let totalConformes = 0;
     let totalNaoConformes = 0;
     let pontuacaoLoja = 0;
@@ -164,12 +153,20 @@ async function passo2_reconstruirMetricaDiaria() {
     }
 
     // ETIQUETA: cobertura = lidos / auditaveis; PRESENCA/RUPTURA: qualidade = conformes / lidos
-    const taxaLoja = tipo === 'ETIQUETA'
-      ? (totalItensAuditaveis > 0 ? (totalLidos / totalItensAuditaveis) * 100 : 0)
-      : (totalLidos > 0 ? (totalConformes / totalLidos) * 100 : 0);
+    const taxaLoja =
+      tipo === "ETIQUETA"
+        ? totalItensAuditaveis > 0
+          ? (totalLidos / totalItensAuditaveis) * 100
+          : 0
+        : totalLidos > 0
+          ? (totalConformes / totalLidos) * 100
+          : 0;
 
     await MetricaDiaria.create({
-      loja, tipo, data, colaborador: null,
+      loja,
+      tipo,
+      data,
+      colaborador: null,
       totalItens,
       totalItensAuditaveis,
       totalLidos,
@@ -187,11 +184,13 @@ async function passo2_reconstruirMetricaDiaria() {
     // ----------------------------------------------------------------
     const porColabSituacao = await AuditItem.aggregate([
       { $match: { ...match, colaborador: { $ne: null } } },
-      { $group: {
-          _id: { colaborador: '$colaborador', situacao: '$situacao' },
+      {
+        $group: {
+          _id: { colaborador: "$colaborador", situacao: "$situacao" },
           count: { $sum: 1 },
-          pontuacao: { $sum: { $ifNull: ['$pontos', 0] } },
-      } },
+          pontuacao: { $sum: { $ifNull: ["$pontos", 0] } },
+        },
+      },
     ]);
 
     // Agrupa por colaborador
@@ -203,7 +202,11 @@ async function passo2_reconstruirMetricaDiaria() {
       if (!colabMap.has(colabId)) {
         colabMap.set(colabId, {
           colaborador: row._id.colaborador,
-          totalItens: 0, totalLidos: 0, totalConformes: 0, totalNaoConformes: 0, pontuacao: 0,
+          totalItens: 0,
+          totalLidos: 0,
+          totalConformes: 0,
+          totalNaoConformes: 0,
+          pontuacao: 0,
         });
       }
       const c = colabMap.get(colabId);
@@ -218,9 +221,13 @@ async function passo2_reconstruirMetricaDiaria() {
 
     for (const c of colabMap.values()) {
       // Por colaborador: taxa e sempre conformes/lidos (qualidade do que esse auditor fez)
-      const taxa = c.totalLidos > 0 ? (c.totalConformes / c.totalLidos) * 100 : 0;
+      const taxa =
+        c.totalLidos > 0 ? (c.totalConformes / c.totalLidos) * 100 : 0;
       await MetricaDiaria.create({
-        loja, tipo, data, colaborador: c.colaborador,
+        loja,
+        tipo,
+        data,
+        colaborador: c.colaborador,
         totalItens: c.totalItens,
         totalItensAuditaveis: c.totalLidos, // por colaborador: so itens lidos (conta:true)
         totalLidos: c.totalLidos,
@@ -235,7 +242,8 @@ async function passo2_reconstruirMetricaDiaria() {
     // Atualiza Auditoria com os totais consolidados
     await Auditoria.updateOne(
       { loja, tipo, data },
-      { $set: {
+      {
+        $set: {
           totalItens,
           totalLidos,
           totalConformes,
@@ -244,66 +252,164 @@ async function passo2_reconstruirMetricaDiaria() {
           pontuacao: Number(pontuacaoLoja.toFixed(2)),
           custoRupturaTotal: Number(custoRupturaLoja.toFixed(2)),
           situacoes: situacoesMap,
-          status: 'CONCLUIDA',
-      } }
+          status: "CONCLUIDA",
+        },
+      },
     );
   }
 }
 
 async function passo3_recalcularColaboradores() {
-  console.log('\n[3] Recalculando acumulados de Colaborador a partir de MetricaDiaria...');
+  console.log(
+    "\n[3] Recalculando acumulados de Colaborador a partir de MetricaDiaria...",
+  );
   const colaboradores = await Colaborador.find();
   console.log(`    ${colaboradores.length} colaborador(es) encontrados.`);
 
   for (const colab of colaboradores) {
     const agg = await MetricaDiaria.aggregate([
       { $match: { loja: colab.loja, colaborador: colab._id } },
-      { $group: {
+      {
+        $lookup: {
+          from: MetricaDiaria.collection.name,
+          let: { loja: "$loja", tipo: "$tipo", data: "$data" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$loja", "$$loja"] },
+                    { $eq: ["$tipo", "$$tipo"] },
+                    { $eq: ["$data", "$$data"] },
+                    { $eq: ["$colaborador", null] },
+                    { $ne: ["$cancelada", true] },
+                  ],
+                },
+              },
+            },
+            { $project: { totalLidos: 1 } },
+          ],
+          as: "metricaLojaParticipacao",
+        },
+      },
+      {
+        $addFields: {
+          itensParticipacaoLoja: {
+            $ifNull: [
+              { $arrayElemAt: ["$metricaLojaParticipacao.totalLidos", 0] },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $group: {
           _id: null,
-          totalLidos: { $sum: '$totalLidos' },
-          totalConformes: { $sum: '$totalConformes' },
-          pontuacao: { $sum: '$pontuacao' },
-          dias: { $addToSet: { tipo: '$tipo', data: '$data' } },
-      } },
+          totalLidos: { $sum: "$totalLidos" },
+          totalConformes: { $sum: "$totalConformes" },
+          totalItensParticipacaoLoja: { $sum: "$itensParticipacaoLoja" },
+          pontuacao: { $sum: "$pontuacao" },
+          totalAuditorias: { $sum: 1 },
+          auditoriasEtiqueta: {
+            $sum: { $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, 1, 0] },
+          },
+          auditoriasPresenca: {
+            $sum: { $cond: [{ $eq: ["$tipo", "PRESENCA"] }, 1, 0] },
+          },
+          auditoriasRuptura: {
+            $sum: { $cond: [{ $eq: ["$tipo", "RUPTURA"] }, 1, 0] },
+          },
+          itensLidosEtiqueta: {
+            $sum: { $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, "$totalLidos", 0] },
+          },
+          itensLidosPresenca: {
+            $sum: { $cond: [{ $eq: ["$tipo", "PRESENCA"] }, "$totalLidos", 0] },
+          },
+          itensLidosRuptura: {
+            $sum: { $cond: [{ $eq: ["$tipo", "RUPTURA"] }, "$totalLidos", 0] },
+          },
+          itensConformesEtiqueta: {
+            $sum: {
+              $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, "$totalConformes", 0],
+            },
+          },
+          itensConformesPresenca: {
+            $sum: {
+              $cond: [{ $eq: ["$tipo", "PRESENCA"] }, "$totalConformes", 0],
+            },
+          },
+          itensConformesRuptura: {
+            $sum: {
+              $cond: [{ $eq: ["$tipo", "RUPTURA"] }, "$totalConformes", 0],
+            },
+          },
+        },
+      },
     ]);
     const a = agg[0] || {};
-    const novoTotalAuditorias = (a.dias || []).length;
+    const novoTotalAuditorias = a.totalAuditorias || 0;
     const novaPontuacao = Number((a.pontuacao || 0).toFixed(2));
 
     if (DRY_RUN) {
-      console.log(`    [dry] ${colab.nome} (${colab.codigoExterno}): ` +
-        `lidos ${colab.totalItensLidos} -> ${a.totalLidos || 0}, ` +
-        `conformes ${colab.totalItensConformes} -> ${a.totalConformes || 0}, ` +
-        `pts ${colab.pontuacao} -> ${novaPontuacao}, ` +
-        `aud ${colab.totalAuditorias} -> ${novoTotalAuditorias}`);
+      console.log(
+        `    [dry] ${colab.nome} (${colab.codigoExterno}): ` +
+          `lidos ${colab.totalItensLidos} -> ${a.totalLidos || 0}, ` +
+          `conformes ${colab.totalItensConformes} -> ${a.totalConformes || 0}, ` +
+          `pts ${colab.pontuacao} -> ${novaPontuacao}, ` +
+          `aud ${colab.totalAuditorias} -> ${novoTotalAuditorias}`,
+      );
       continue;
     }
 
     colab.totalItensLidos = a.totalLidos || 0;
     colab.totalItensConformes = a.totalConformes || 0;
     colab.totalAuditorias = novoTotalAuditorias;
+    colab.totalItensParticipacaoLoja = a.totalItensParticipacaoLoja || 0;
+    colab.metricasPorTipo = normalizarMetricasPorTipo({
+      ETIQUETA: {
+        totalAuditorias: a.auditoriasEtiqueta || 0,
+        totalItensLidos: a.itensLidosEtiqueta || 0,
+        totalItensConformes: a.itensConformesEtiqueta || 0,
+      },
+      PRESENCA: {
+        totalAuditorias: a.auditoriasPresenca || 0,
+        totalItensLidos: a.itensLidosPresenca || 0,
+        totalItensConformes: a.itensConformesPresenca || 0,
+      },
+      RUPTURA: {
+        totalAuditorias: a.auditoriasRuptura || 0,
+        totalItensLidos: a.itensLidosRuptura || 0,
+        totalItensConformes: a.itensConformesRuptura || 0,
+      },
+    });
     colab.pontuacao = novaPontuacao;
     colab.nivel = calcNivel(colab.pontuacao);
-    colab.conquistas = recalcConquistas(colab);
+    colab.conquistas = [];
+    await avaliarConquistas(colab);
+    colab.nivel = calcNivel(colab.pontuacao);
     await colab.save();
     stats.colaboradoresAjustados++;
   }
 }
 
 async function passo4_recalcularLojas() {
-  console.log('\n[4] Recalculando Loja.pontuacao e nivel a partir de MetricaDiaria...');
+  console.log(
+    "\n[4] Recalculando Loja.pontuacao e nivel a partir de MetricaDiaria...",
+  );
   const lojas = await Loja.find();
   console.log(`    ${lojas.length} loja(s).`);
 
   for (const loja of lojas) {
     const agg = await MetricaDiaria.aggregate([
       { $match: { loja: loja._id, colaborador: null } },
-      { $group: { _id: null, pontuacao: { $sum: '$pontuacao' } } },
+      { $group: { _id: null, pontuacao: { $sum: "$pontuacao" } } },
     ]);
     const novaPontuacao = Number((agg[0]?.pontuacao || 0).toFixed(2));
 
     if (DRY_RUN) {
-      console.log(`    [dry] ${loja.nome}: pts ${loja.pontuacao} -> ${novaPontuacao}`);
+      console.log(
+        `    [dry] ${loja.nome}: pts ${loja.pontuacao} -> ${novaPontuacao}`,
+      );
       continue;
     }
 
@@ -315,9 +421,11 @@ async function passo4_recalcularLojas() {
 }
 
 async function passo5_garantirIndiceUnico() {
-  console.log('\n[5] Garantindo indice unico em Auditoria(loja, tipo, data)...');
+  console.log(
+    "\n[5] Garantindo indice unico em Auditoria(loja, tipo, data)...",
+  );
   if (DRY_RUN) {
-    console.log('    [dry] indice nao alterado');
+    console.log("    [dry] indice nao alterado");
     return;
   }
   const indices = await Auditoria.collection.indexes();
@@ -344,15 +452,18 @@ async function passo5_garantirIndiceUnico() {
   }
   await Auditoria.collection.createIndex(
     { loja: 1, tipo: 1, data: 1 },
-    { unique: true, name: 'loja_tipo_data_unique' }
+    { unique: true, name: "loja_tipo_data_unique" },
   );
-  console.log('    Indice unico criado.');
+  console.log("    Indice unico criado.");
 }
 
 async function main() {
   await connectDB();
-  console.log('\n\u2550\u2550\u2550 RECOMPUTE/MIGRACAO ACUMULADOS \u2550\u2550\u2550');
-  if (DRY_RUN) console.log('  MODO DRY-RUN - nenhuma alteracao sera persistida\n');
+  console.log(
+    "\n\u2550\u2550\u2550 RECOMPUTE/MIGRACAO ACUMULADOS \u2550\u2550\u2550",
+  );
+  if (DRY_RUN)
+    console.log("  MODO DRY-RUN - nenhuma alteracao sera persistida\n");
 
   await passo1_mesclarAuditoriasDuplicadas();
   await passo2_reconstruirMetricaDiaria();
@@ -360,15 +471,15 @@ async function main() {
   await passo4_recalcularLojas();
   await passo5_garantirIndiceUnico();
 
-  console.log('\n\u2550\u2550\u2550 RESUMO \u2550\u2550\u2550');
+  console.log("\n\u2550\u2550\u2550 RESUMO \u2550\u2550\u2550");
   console.log(JSON.stringify(stats, null, 2));
-  console.log('\nConcluido.\n');
+  console.log("\nConcluido.\n");
 
   await mongoose.disconnect();
   process.exit(0);
 }
 
 main().catch((e) => {
-  console.error('Erro inesperado:', e);
+  console.error("Erro inesperado:", e);
   process.exit(1);
 });
