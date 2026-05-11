@@ -14,6 +14,7 @@ import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { ROLES } from "../models/Usuario.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
+import { classificar } from "../services/regras.js";
 import mongoose from "mongoose";
 
 const router = Router();
@@ -41,9 +42,7 @@ function resumirPresencaDashboard(row) {
     itensLidos,
     itensNaoLidos,
     taxaConformidade:
-      totalItens > 0
-        ? Number(((itensLidos / totalItens) * 100).toFixed(2))
-        : 0,
+      totalItens > 0 ? Number(((itensLidos / totalItens) * 100).toFixed(2)) : 0,
   };
 }
 
@@ -367,6 +366,439 @@ async function montarPerfilColaborador({
   return { colaborador: colab, periodo: { inicio, fim }, porTipo, serie };
 }
 
+function normalizarLocalCorredor(local) {
+  const valor = String(local || "").trim();
+  return valor || "Sem corredor";
+}
+
+function montarMatchLocalCorredor(local) {
+  return local === "Sem corredor"
+    ? { $or: [{ local: null }, { local: "" }, { local: { $exists: false } }] }
+    : { local };
+}
+
+function estatisticasLinhaAuditoria(tipo, item) {
+  const cls = classificar(tipo, item.situacao);
+  return {
+    totalItens: 1,
+    totalItensAuditaveis: cls.conforme !== null ? 1 : 0,
+    totalLidos: cls.conta ? 1 : 0,
+    totalConformes: cls.conta && cls.conforme === true ? 1 : 0,
+    totalNaoConformes: cls.conta && cls.conforme === false ? 1 : 0,
+  };
+}
+
+function calcularPctConclusaoCorredor(resumo) {
+  if (!resumo.totalItensAuditaveis) return 0;
+  return Number(
+    ((resumo.totalLidos / resumo.totalItensAuditaveis) * 100).toFixed(1),
+  );
+}
+
+function calcularTaxaConformidadeCorredor(tipo, resumo) {
+  if (tipo === TIPOS_AUDITORIA.ETIQUETA) {
+    if (!resumo.totalItensAuditaveis) return 0;
+    return Number(
+      ((resumo.totalLidos / resumo.totalItensAuditaveis) * 100).toFixed(1),
+    );
+  }
+  if (!resumo.totalLidos) return 0;
+  return Number(((resumo.totalConformes / resumo.totalLidos) * 100).toFixed(1));
+}
+
+function ordenarCorredoresResumo(a, b) {
+  if (a.emDestaque !== b.emDestaque) return a.emDestaque ? -1 : 1;
+  if (a.meuCorredor !== b.meuCorredor) return a.meuCorredor ? -1 : 1;
+  if ((a.minhaLeitura || 0) !== (b.minhaLeitura || 0)) {
+    return (b.minhaLeitura || 0) - (a.minhaLeitura || 0);
+  }
+  if ((a.totalLidos || 0) !== (b.totalLidos || 0)) {
+    return (b.totalLidos || 0) - (a.totalLidos || 0);
+  }
+  return a.local.localeCompare(b.local, "pt-BR");
+}
+
+async function montarCorredoresAuditoria({ auditoria, colaboradorId, itens }) {
+  const colaboradorIdStr = String(colaboradorId);
+  const corredoresMap = new Map();
+  const colaboradoresIds = new Set();
+
+  for (const item of itens) {
+    const local = normalizarLocalCorredor(item.local);
+    const estatisticas = estatisticasLinhaAuditoria(auditoria.tipo, item);
+    const corredorAtual = corredoresMap.get(local) || {
+      local,
+      totalItens: 0,
+      totalItensAuditaveis: 0,
+      totalLidos: 0,
+      totalConformes: 0,
+      totalNaoConformes: 0,
+      meuCorredor: false,
+      minhaLeitura: 0,
+      ultimoMovimentoMeu: null,
+      participantesMap: new Map(),
+    };
+
+    corredorAtual.totalItens += estatisticas.totalItens;
+    corredorAtual.totalItensAuditaveis += estatisticas.totalItensAuditaveis;
+    corredorAtual.totalLidos += estatisticas.totalLidos;
+    corredorAtual.totalConformes += estatisticas.totalConformes;
+    corredorAtual.totalNaoConformes += estatisticas.totalNaoConformes;
+
+    const participanteId = item.colaborador ? String(item.colaborador) : null;
+    const participanteKey =
+      participanteId ||
+      `sem:${item.colaboradorCodigo || item.colaboradorNome || "colaborador"}`;
+    const participanteAtual = corredorAtual.participantesMap.get(
+      participanteKey,
+    ) || {
+      colaboradorId: participanteId,
+      codigoExterno: item.colaboradorCodigo || "",
+      nome: item.colaboradorNome || "Sem colaborador",
+      avatarUrl: "",
+      totalItens: 0,
+      totalItensAuditaveis: 0,
+      totalLidos: 0,
+      totalConformes: 0,
+      totalNaoConformes: 0,
+      eu: participanteId === colaboradorIdStr,
+    };
+
+    participanteAtual.totalItens += estatisticas.totalItens;
+    participanteAtual.totalItensAuditaveis += estatisticas.totalItensAuditaveis;
+    participanteAtual.totalLidos += estatisticas.totalLidos;
+    participanteAtual.totalConformes += estatisticas.totalConformes;
+    participanteAtual.totalNaoConformes += estatisticas.totalNaoConformes;
+
+    if (participanteAtual.eu) {
+      corredorAtual.meuCorredor = true;
+      corredorAtual.minhaLeitura += estatisticas.totalLidos;
+      const movimentoAtual =
+        item.auditadoEm || item.updatedAt || item.createdAt;
+      if (
+        movimentoAtual &&
+        (!corredorAtual.ultimoMovimentoMeu ||
+          new Date(movimentoAtual) > new Date(corredorAtual.ultimoMovimentoMeu))
+      ) {
+        corredorAtual.ultimoMovimentoMeu = movimentoAtual;
+      }
+    }
+
+    corredorAtual.participantesMap.set(participanteKey, participanteAtual);
+    corredoresMap.set(local, corredorAtual);
+
+    if (participanteId) colaboradoresIds.add(participanteId);
+  }
+
+  const colaboradores = colaboradoresIds.size
+    ? await Colaborador.find({ _id: { $in: Array.from(colaboradoresIds) } })
+        .select({ _id: 1, nome: 1, codigoExterno: 1, avatarUrl: 1 })
+        .lean()
+    : [];
+  const colaboradoresMap = new Map(
+    colaboradores.map((item) => [String(item._id), item]),
+  );
+
+  const corredores = [...corredoresMap.values()].map((corredor) => {
+    const participantes = [...corredor.participantesMap.values()]
+      .map((participante) => {
+        const dadosColab = participante.colaboradorId
+          ? colaboradoresMap.get(participante.colaboradorId)
+          : null;
+        return {
+          ...participante,
+          nome: participante.nome || dadosColab?.nome || "Sem colaborador",
+          codigoExterno:
+            participante.codigoExterno || dadosColab?.codigoExterno || "",
+          avatarUrl: dadosColab?.avatarUrl || "",
+          progressoPct: calcularPctConclusaoCorredor(participante),
+          taxaConformidade: calcularTaxaConformidadeCorredor(
+            auditoria.tipo,
+            participante,
+          ),
+        };
+      })
+      .sort((a, b) => {
+        if (a.eu !== b.eu) return a.eu ? -1 : 1;
+        if (a.totalLidos !== b.totalLidos) return b.totalLidos - a.totalLidos;
+        return a.nome.localeCompare(b.nome, "pt-BR");
+      });
+
+    return {
+      local: corredor.local,
+      totalItens: corredor.totalItens,
+      totalItensAuditaveis: corredor.totalItensAuditaveis,
+      totalLidos: corredor.totalLidos,
+      totalConformes: corredor.totalConformes,
+      totalNaoConformes: corredor.totalNaoConformes,
+      meuCorredor: corredor.meuCorredor,
+      minhaLeitura: corredor.minhaLeitura,
+      ultimoMovimentoMeu: corredor.ultimoMovimentoMeu,
+      participantes,
+      totalParticipantes: participantes.length,
+      progressoPct: calcularPctConclusaoCorredor(corredor),
+      taxaConformidade: calcularTaxaConformidadeCorredor(
+        auditoria.tipo,
+        corredor,
+      ),
+      emDestaque: false,
+    };
+  });
+
+  const corredorAtual = corredores
+    .filter((item) => item.meuCorredor)
+    .sort((a, b) => {
+      const dataA = a.ultimoMovimentoMeu
+        ? new Date(a.ultimoMovimentoMeu).getTime()
+        : 0;
+      const dataB = b.ultimoMovimentoMeu
+        ? new Date(b.ultimoMovimentoMeu).getTime()
+        : 0;
+      if (dataA !== dataB) return dataB - dataA;
+      return (b.minhaLeitura || 0) - (a.minhaLeitura || 0);
+    })[0];
+
+  const corredoresMarcados = corredores.map((item) => ({
+    ...item,
+    emDestaque: item.local === corredorAtual?.local,
+  }));
+
+  return corredoresMarcados.sort(ordenarCorredoresResumo);
+}
+
+async function encontrarAuditoriasPortal(lojaId) {
+  const lojaObjectId = new mongoose.Types.ObjectId(lojaId);
+  const inicioHoje = dayjs().startOf("day").toDate();
+  const fimHoje = dayjs().endOf("day").toDate();
+
+  const filtroBase = {
+    loja: lojaObjectId,
+    status: { $ne: "CANCELADA" },
+  };
+
+  const auditoriaHoje = await Auditoria.findOne({
+    ...filtroBase,
+    data: { $gte: inicioHoje, $lte: fimHoje },
+  })
+    .sort({ data: -1, createdAt: -1 })
+    .lean();
+
+  if (auditoriaHoje) {
+    return {
+      auditoriaHoje,
+      auditoriaAnterior: await Auditoria.findOne({
+        ...filtroBase,
+        data: { $lt: inicioHoje },
+      })
+        .sort({ data: -1, createdAt: -1 })
+        .lean(),
+    };
+  }
+
+  const auditoriaAnterior = await Auditoria.findOne({
+    ...filtroBase,
+    data: { $lt: inicioHoje },
+  })
+    .sort({ data: -1, createdAt: -1 })
+    .lean();
+
+  return { auditoriaHoje: null, auditoriaAnterior };
+}
+
+function montarAvisoAuditoriaPortal({
+  origem,
+  auditoriaHoje,
+  auditoriaAnterior,
+  auditoriaSelecionada,
+}) {
+  if (auditoriaSelecionada) {
+    if (origem === "anterior") {
+      return auditoriaHoje
+        ? "Exibindo a auditoria anterior por solicitação."
+        : "Sem auditoria em andamento hoje. Exibindo a última auditoria anterior disponível para consulta.";
+    }
+    return "";
+  }
+
+  if (origem === "anterior") {
+    return "Não há auditoria anterior disponível para consulta.";
+  }
+
+  if (auditoriaAnterior) {
+    return "Não há auditoria em andamento hoje. Use o botão para consultar a auditoria anterior.";
+  }
+
+  return "Não há auditoria em andamento hoje e nenhuma auditoria anterior disponível para consulta.";
+}
+
+async function montarAuditoriaDoDiaPortal({
+  colaboradorId,
+  escopoLojaId,
+  origem = "hoje",
+}) {
+  const filtroColab = escopoLojaId
+    ? { _id: colaboradorId, loja: new mongoose.Types.ObjectId(escopoLojaId) }
+    : { _id: colaboradorId };
+  const colab = await Colaborador.findOne(filtroColab)
+    .select({ _id: 1, loja: 1 })
+    .lean();
+  if (!colab) return null;
+
+  const { auditoriaHoje, auditoriaAnterior } = await encontrarAuditoriasPortal(
+    colab.loja,
+  );
+  const auditoria = origem === "anterior" ? auditoriaAnterior : auditoriaHoje;
+  const exibindoAnterior = origem === "anterior" && Boolean(auditoria);
+  const aviso = montarAvisoAuditoriaPortal({
+    origem,
+    auditoriaHoje,
+    auditoriaAnterior,
+    auditoriaSelecionada: auditoria,
+  });
+
+  if (!auditoria) {
+    return {
+      auditoria: null,
+      meusCorredores: [],
+      demaisCorredores: [],
+      totalCorredores: 0,
+      origem,
+      exibindoAnterior: false,
+      temAuditoriaHoje: Boolean(auditoriaHoje),
+      temAuditoriaAnterior: Boolean(auditoriaAnterior),
+      aviso,
+    };
+  }
+
+  const itens = await AuditItem.find({
+    auditoria: auditoria._id,
+    ...FILTRO_ITENS_ATIVOS,
+  })
+    .select({
+      local: 1,
+      tipo: 1,
+      situacao: 1,
+      colaborador: 1,
+      colaboradorCodigo: 1,
+      colaboradorNome: 1,
+      auditadoEm: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .lean();
+
+  const corredores = await montarCorredoresAuditoria({
+    auditoria,
+    colaboradorId,
+    itens,
+  });
+
+  return {
+    auditoria: {
+      _id: auditoria._id,
+      tipo: auditoria.tipo,
+      data: auditoria.data,
+      status: auditoria.status,
+      origem: exibindoAnterior ? "anterior" : "hoje",
+    },
+    meusCorredores: corredores.filter((item) => item.meuCorredor),
+    demaisCorredores: corredores.filter((item) => !item.meuCorredor),
+    totalCorredores: corredores.length,
+    origem: exibindoAnterior ? "anterior" : "hoje",
+    exibindoAnterior,
+    temAuditoriaHoje: Boolean(auditoriaHoje),
+    temAuditoriaAnterior: Boolean(auditoriaAnterior),
+    aviso,
+  };
+}
+
+async function montarDetalheCorredorPortal({
+  colaboradorId,
+  escopoLojaId,
+  auditoriaId,
+  local,
+}) {
+  const filtroAuditoria = {
+    _id: new mongoose.Types.ObjectId(auditoriaId),
+    status: { $ne: "CANCELADA" },
+  };
+  if (escopoLojaId)
+    filtroAuditoria.loja = new mongoose.Types.ObjectId(escopoLojaId);
+
+  const auditoria = await Auditoria.findOne(filtroAuditoria).lean();
+  if (!auditoria) return null;
+
+  const itens = await AuditItem.find({
+    auditoria: auditoria._id,
+    ...FILTRO_ITENS_ATIVOS,
+    ...montarMatchLocalCorredor(local),
+  })
+    .select({
+      codigo: 1,
+      produto: 1,
+      classeRaiz: 1,
+      classe: 1,
+      setor: 1,
+      local: 1,
+      colaborador: 1,
+      colaboradorCodigo: 1,
+      colaboradorNome: 1,
+      situacao: 1,
+      conforme: 1,
+      auditadoEm: 1,
+      estoqueAtual: 1,
+      estoqueLeitura: 1,
+      diasSemVenda: 1,
+      custoRuptura: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .sort({ auditadoEm: -1, produto: 1, codigo: 1 })
+    .lean();
+
+  const [corredor] = await montarCorredoresAuditoria({
+    auditoria,
+    colaboradorId,
+    itens,
+  });
+
+  return {
+    auditoria: {
+      _id: auditoria._id,
+      tipo: auditoria.tipo,
+      data: auditoria.data,
+      status: auditoria.status,
+    },
+    corredor,
+    itens: itens.map((item) => {
+      const cls = classificar(auditoria.tipo, item.situacao);
+      const foiLido = Boolean(cls.conta);
+
+      return {
+        _id: item._id,
+        codigo: item.codigo || "-",
+        produto: item.produto || "Produto sem descrição",
+        classeRaiz: item.classeRaiz || "",
+        classe: item.classe || "",
+        setor: item.setor || "",
+        local: normalizarLocalCorredor(item.local),
+        colaboradorId: item.colaborador ? String(item.colaborador) : null,
+        colaboradorCodigo: item.colaboradorCodigo || "",
+        colaboradorNome: item.colaboradorNome || "Sem colaborador",
+        situacao: item.situacao || "Sem situação",
+        conforme: item.conforme,
+        foiLido,
+        statusLeitura: foiLido ? "lido" : "nao-lido",
+        auditadoEm: item.auditadoEm || item.updatedAt || item.createdAt || null,
+        estoqueAtual: item.estoqueAtual,
+        estoqueLeitura: item.estoqueLeitura,
+        diasSemVenda: item.diasSemVenda,
+        custoRuptura: item.custoRuptura,
+      };
+    }),
+  };
+}
+
 async function montarPerfilLoja({
   lojaId,
   periodo,
@@ -596,6 +1028,52 @@ async function montarPerfilLoja({
 }
 
 router.get(
+  "/portal/me/auditoria-do-dia",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const origem =
+      String(req.query.origem || "hoje")
+        .trim()
+        .toLowerCase() === "anterior"
+        ? "anterior"
+        : "hoje";
+    const dados = await montarAuditoriaDoDiaPortal({
+      colaboradorId: req.colaborador._id,
+      escopoLojaId: req.escopoLojaId,
+      origem,
+    });
+    if (!dados)
+      return res.status(404).json({ error: "Colaborador não encontrado" });
+    res.json(dados);
+  }),
+);
+
+router.get(
+  "/portal/me/auditoria-do-dia/corredor",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const auditoriaId = String(req.query.auditoriaId || "").trim();
+    const local = normalizarLocalCorredor(req.query.local);
+
+    if (!mongoose.Types.ObjectId.isValid(auditoriaId)) {
+      return res.status(400).json({ error: "auditoriaId inválido" });
+    }
+
+    const dados = await montarDetalheCorredorPortal({
+      colaboradorId: req.colaborador._id,
+      escopoLojaId: req.escopoLojaId,
+      auditoriaId,
+      local,
+    });
+    if (!dados)
+      return res
+        .status(404)
+        .json({ error: "Corredor ou auditoria não encontrados" });
+    res.json(dados);
+  }),
+);
+
+router.get(
   "/portal/me",
   autenticarColaborador,
   asyncHandler(async (req, res) => {
@@ -609,69 +1087,10 @@ router.get(
     if (!dados)
       return res.status(404).json({ error: "Colaborador não encontrado" });
 
-    const colabId = new mongoose.Types.ObjectId(req.colaborador._id);
-    const matchCorredores = { colaborador: colabId, ...FILTRO_ITENS_ATIVOS };
-    if (
-      req.query.tipo &&
-      Object.values(TIPOS_AUDITORIA).includes(req.query.tipo)
-    )
-      matchCorredores.tipo = req.query.tipo;
-    matchCorredores.data = {
-      $gte: dados.periodo.inicio,
-      $lte: dados.periodo.fim,
-    };
-
-    const corredoresAgg = await AuditItem.aggregate([
-      { $match: matchCorredores },
-      {
-        $group: {
-          _id: {
-            local: { $ifNull: ["$local", "Sem corredor"] },
-            tipo: "$tipo",
-          },
-          totalLidos: { $sum: 1 },
-          totalConformes: {
-            $sum: { $cond: [{ $eq: ["$conforme", true] }, 1, 0] },
-          },
-          ultimaData: { $max: "$data" },
-        },
-      },
-      { $sort: { totalLidos: -1 } },
-      { $limit: 60 },
-    ]);
-
-    const corredoresMap = new Map();
-    for (const r of corredoresAgg) {
-      const local = r._id.local || "Sem corredor";
-      const atual = corredoresMap.get(local) || {
-        local,
-        totalLidos: 0,
-        totalConformes: 0,
-        ultimaData: null,
-        porTipo: {},
-      };
-      atual.totalLidos += r.totalLidos;
-      atual.totalConformes += r.totalConformes;
-      atual.porTipo[r._id.tipo] =
-        (atual.porTipo[r._id.tipo] || 0) + r.totalLidos;
-      if (!atual.ultimaData || r.ultimaData > atual.ultimaData)
-        atual.ultimaData = r.ultimaData;
-      corredoresMap.set(local, atual);
-    }
-    const corredores = [...corredoresMap.values()]
-      .map((c) => ({
-        ...c,
-        taxaConformidade:
-          c.totalLidos > 0
-            ? Number(((c.totalConformes / c.totalLidos) * 100).toFixed(1))
-            : 0,
-      }))
-      .sort((a, b) => b.totalLidos - a.totalLidos);
-
     const colabFull = await Colaborador.findById(req.colaborador._id).lean();
     const conquistas = await resolverConquistasPortal(colabFull || {});
 
-    res.json({ ...dados, corredores, conquistas });
+    res.json({ ...dados, conquistas });
   }),
 );
 
@@ -747,7 +1166,9 @@ router.get(
             totalItensAuditaveis: resumoPresenca
               ? resumoPresenca.totalItens
               : r.totalItensAuditaveis,
-            totalLidos: resumoPresenca ? resumoPresenca.totalItens : r.totalLidos,
+            totalLidos: resumoPresenca
+              ? resumoPresenca.totalItens
+              : r.totalLidos,
             totalConformes: resumoPresenca
               ? resumoPresenca.itensLidos
               : r.totalConformes,
@@ -973,7 +1394,9 @@ router.get(
         ? totaisPorTipo[TIPOS_AUDITORIA.PRESENCA]
         : null;
     const produtosAuditadosResumo = Number(
-      resumoCardsPresenca?.totalLidos || resumoAuditorias[0]?.produtosAuditados || 0,
+      resumoCardsPresenca?.totalLidos ||
+        resumoAuditorias[0]?.produtosAuditados ||
+        0,
     );
     const mediaConclusaoResumo = Number(
       (
