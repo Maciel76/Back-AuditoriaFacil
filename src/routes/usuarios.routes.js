@@ -59,6 +59,34 @@ router.post(
 );
 
 router.put(
+  "/me/senha",
+  asyncHandler(async (req, res) => {
+    const data = z
+      .object({
+        senhaAtual: z.string().min(1),
+        senhaNova: z.string().min(6),
+      })
+      .parse(req.body);
+
+    const usuario = await Usuario.findById(req.usuario.id);
+    if (!usuario || !usuario.ativo)
+      throw httpError(404, "Usuário não encontrado");
+
+    const senhaAtualOk = await usuario.checarSenha(data.senhaAtual);
+    if (!senhaAtualOk) throw httpError(400, "Senha atual incorreta");
+
+    const senhaRepetida = await usuario.checarSenha(data.senhaNova);
+    if (senhaRepetida)
+      throw httpError(400, "A nova senha deve ser diferente da atual");
+
+    usuario.senhaHash = await Usuario.hashSenha(data.senhaNova);
+    await usuario.save();
+
+    res.json({ ok: true });
+  }),
+);
+
+router.put(
   "/:id",
   asyncHandler(async (req, res) => {
     const u = await Usuario.findById(req.params.id);
