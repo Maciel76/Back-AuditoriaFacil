@@ -366,6 +366,42 @@ async function montarPerfilColaborador({
   return { colaborador: colab, periodo: { inicio, fim }, porTipo, serie };
 }
 
+function calcularTaxaConformidadeColaborador(colaborador) {
+  const totalLidos = Number(colaborador?.totalItensLidos || 0);
+  const totalConformes = Number(colaborador?.totalItensConformes || 0);
+  if (!totalLidos) return 0;
+  return Number(((totalConformes / totalLidos) * 100).toFixed(1));
+}
+
+function resumirColegaPortal(colaborador) {
+  return {
+    _id: colaborador._id,
+    nome: colaborador.nome,
+    cargo: colaborador.cargo || "",
+    avatarUrl: colaborador.avatarUrl || "",
+    nivel: Number(colaborador.nivel || 1),
+    pontuacao: Number(colaborador.pontuacao || 0),
+    totalAuditorias: Number(colaborador.totalAuditorias || 0),
+    totalItensLidos: Number(colaborador.totalItensLidos || 0),
+    taxaConformidade: calcularTaxaConformidadeColaborador(colaborador),
+  };
+}
+
+function montarCabecalhoPerfilPublicoColaborador(colaborador) {
+  return {
+    _id: colaborador._id,
+    nome: colaborador.nome,
+    cargo: colaborador.cargo || "",
+    avatarUrl: colaborador.avatarUrl || "",
+    nivel: Number(colaborador.nivel || 1),
+    pontuacao: Number(colaborador.pontuacao || 0),
+    totalAuditorias: Number(colaborador.totalAuditorias || 0),
+    totalItensLidos: Number(colaborador.totalItensLidos || 0),
+    totalItensConformes: Number(colaborador.totalItensConformes || 0),
+    taxaConformidade: calcularTaxaConformidadeColaborador(colaborador),
+  };
+}
+
 function normalizarLocalCorredor(local) {
   const valor = String(local || "").trim();
   return valor || "Sem corredor";
@@ -1091,6 +1127,65 @@ router.get(
     const conquistas = await resolverConquistasPortal(colabFull || {});
 
     res.json({ ...dados, conquistas });
+  }),
+);
+
+router.get(
+  "/portal/me/colegas",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const filtro = {
+      ativo: true,
+      _id: { $ne: req.colaborador._id },
+      loja: new mongoose.Types.ObjectId(req.escopoLojaId),
+    };
+
+    const colegas = await Colaborador.find(filtro)
+      .select({
+        nome: 1,
+        cargo: 1,
+        avatarUrl: 1,
+        nivel: 1,
+        pontuacao: 1,
+        totalAuditorias: 1,
+        totalItensLidos: 1,
+        totalItensConformes: 1,
+      })
+      .sort({ nivel: -1, pontuacao: -1, nome: 1 })
+      .lean();
+
+    res.json({ items: colegas.map(resumirColegaPortal) });
+  }),
+);
+
+router.get(
+  "/portal/me/colegas/:id/perfil",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Colaborador inválido" });
+    }
+
+    const dados = await montarPerfilColaborador({
+      colaboradorId: req.params.id,
+      escopoLojaId: req.escopoLojaId,
+      periodo: req.query.periodo || "tudo",
+      tipo: req.query.tipo,
+      dataInicio: req.query.dataInicio,
+      dataFim: req.query.dataFim,
+    });
+
+    if (!dados?.colaborador?.ativo) {
+      return res.status(404).json({ error: "Colaborador não encontrado" });
+    }
+
+    const conquistas = await resolverConquistasPortal(dados.colaborador || {});
+
+    res.json({
+      ...dados,
+      colaborador: montarCabecalhoPerfilPublicoColaborador(dados.colaborador),
+      conquistas,
+    });
   }),
 );
 
