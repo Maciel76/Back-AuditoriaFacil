@@ -14,6 +14,7 @@ import { ROLES } from "../models/Usuario.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { processarPlanilha } from "../services/auditoriaProcessor.js";
 import { cancelarAuditoria } from "../services/auditoriaCancelamento.js";
+import { reclassificarAuditoria } from "../services/auditoriaReclassificacao.js";
 import { REGRAS } from "../services/regras.js";
 
 const router = Router();
@@ -238,6 +239,36 @@ router.post(
       mensagem:
         "Auditoria cancelada. As métricas desse dia foram zeradas e não entram nos cálculos.",
     });
+  }),
+);
+
+router.patch(
+  "/:id/reclassificar",
+  escopoLoja,
+  exigirEscopoLoja,
+  exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
+  asyncHandler(async (req, res) => {
+    const novoTipo = String(req.body?.tipo || "").toUpperCase().trim();
+    if (!Object.values(TIPOS_AUDITORIA).includes(novoTipo)) {
+      throw httpError(400, "Tipo de auditoria inválido");
+    }
+    try {
+      const auditoria = await reclassificarAuditoria({
+        auditoriaId: req.params.id,
+        lojaId: req.escopoLojaId,
+        novoTipo,
+        usuarioId: req.usuario.id,
+      });
+      if (!auditoria) throw httpError(404, "Auditoria não encontrada");
+      res.json({
+        ok: true,
+        auditoria: auditoria.toObject ? auditoria.toObject() : auditoria,
+        mensagem: `Auditoria reclassificada para ${REGRAS[novoTipo].label}. Métricas e ranking foram recalculados.`,
+      });
+    } catch (error) {
+      if (error?.status) throw httpError(error.status, error.message);
+      throw error;
+    }
   }),
 );
 

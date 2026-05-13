@@ -1567,10 +1567,21 @@ router.get(
         $group: {
           _id: "$colaborador",
           totalLidos: { $sum: "$totalLidos" },
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
           totalConformes: { $sum: "$totalConformes" },
           totalNaoConformes: { $sum: "$totalNaoConformes" },
           pontuacao: { $sum: "$pontuacao" },
+          custoRuptura: { $sum: "$custoRuptura" },
           dias: { $sum: 1 },
+          auditoriasEtiqueta: {
+            $sum: { $cond: [{ $eq: ["$tipo", "ETIQUETA"] }, 1, 0] },
+          },
+          auditoriasPresenca: {
+            $sum: { $cond: [{ $eq: ["$tipo", "PRESENCA"] }, 1, 0] },
+          },
+          auditoriasRuptura: {
+            $sum: { $cond: [{ $eq: ["$tipo", "RUPTURA"] }, 1, 0] },
+          },
         },
       },
       {
@@ -1585,6 +1596,41 @@ router.get(
                 ],
               },
               0,
+            ],
+          },
+          percentualConclusao: {
+            $cond: [
+              { $gt: ["$totalItensAuditaveis", 0] },
+              {
+                $multiply: [
+                  { $divide: ["$totalLidos", "$totalItensAuditaveis"] },
+                  100,
+                ],
+              },
+              null,
+            ],
+          },
+          totalAuditorias: {
+            $add: [
+              "$auditoriasEtiqueta",
+              "$auditoriasPresenca",
+              "$auditoriasRuptura",
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          percentualRestante: {
+            $cond: [
+              { $eq: ["$percentualConclusao", null] },
+              null,
+              {
+                $max: [
+                  0,
+                  { $subtract: [100, "$percentualConclusao"] },
+                ],
+              },
             ],
           },
         },
@@ -1604,10 +1650,32 @@ router.get(
         $project: {
           _id: 1,
           totalLidos: 1,
+          totalItensAuditaveis: 1,
           totalConformes: 1,
           totalNaoConformes: 1,
           pontuacao: { $round: ["$pontuacao", 2] },
           taxaConformidade: { $round: ["$taxaConformidade", 2] },
+          custoRuptura: { $round: ["$custoRuptura", 2] },
+          percentualConclusao: {
+            $cond: [
+              { $eq: ["$percentualConclusao", null] },
+              null,
+              { $round: ["$percentualConclusao", 2] },
+            ],
+          },
+          percentualRestante: {
+            $cond: [
+              { $eq: ["$percentualRestante", null] },
+              null,
+              { $round: ["$percentualRestante", 2] },
+            ],
+          },
+          totalAuditorias: 1,
+          auditoriasPorTipo: {
+            ETIQUETA: "$auditoriasEtiqueta",
+            PRESENCA: "$auditoriasPresenca",
+            RUPTURA: "$auditoriasRuptura",
+          },
           dias: 1,
           nome: "$colaborador.nome",
           codigoExterno: "$colaborador.codigoExterno",
@@ -1642,7 +1710,19 @@ router.get(
       { $match: match },
       {
         $group: {
-          _id: "$loja",
+          _id: { loja: "$loja", tipo: "$tipo", data: "$data" },
+          totalLidos: { $sum: "$totalLidos" },
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
+          totalConformes: { $sum: "$totalConformes" },
+          totalNaoConformes: { $sum: "$totalNaoConformes" },
+          pontuacao: { $sum: "$pontuacao" },
+          custoRuptura: { $sum: "$custoRuptura" },
+          cancelada: { $max: "$cancelada" },
+        },
+      },
+      {
+        $group: {
+          _id: "$_id.loja",
           totalLidos: { $sum: "$totalLidos" },
           totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
           totalConformes: { $sum: "$totalConformes" },
@@ -1652,10 +1732,26 @@ router.get(
           auditoriasCanceladas: {
             $sum: { $cond: [{ $eq: ["$cancelada", true] }, 1, 0] },
           },
+          auditoriasEtiqueta: {
+            $sum: { $cond: [{ $eq: ["$_id.tipo", "ETIQUETA"] }, 1, 0] },
+          },
+          auditoriasPresenca: {
+            $sum: { $cond: [{ $eq: ["$_id.tipo", "PRESENCA"] }, 1, 0] },
+          },
+          auditoriasRuptura: {
+            $sum: { $cond: [{ $eq: ["$_id.tipo", "RUPTURA"] }, 1, 0] },
+          },
         },
       },
       {
         $addFields: {
+          totalAuditorias: {
+            $add: [
+              "$auditoriasEtiqueta",
+              "$auditoriasPresenca",
+              "$auditoriasRuptura",
+            ],
+          },
           taxaConformidade:
             tipoFilter === "ETIQUETA"
               ? {
@@ -1682,6 +1778,31 @@ router.get(
                     0,
                   ],
                 },
+          percentualConclusao: {
+            $cond: [
+              { $gt: ["$totalItensAuditaveis", 0] },
+              {
+                $multiply: [
+                  { $divide: ["$totalLidos", "$totalItensAuditaveis"] },
+                  100,
+                ],
+              },
+              null,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          percentualRestante: {
+            $cond: [
+              { $eq: ["$percentualConclusao", null] },
+              null,
+              {
+                $max: [0, { $subtract: [100, "$percentualConclusao"] }],
+              },
+            ],
+          },
         },
       },
       { $sort: { pontuacao: -1 } },
@@ -1706,11 +1827,32 @@ router.get(
           avatarUrl: "$loja.avatarUrl",
           nivel: "$loja.nivel",
           totalLidos: 1,
+          totalItensAuditaveis: 1,
           totalConformes: 1,
           totalNaoConformes: 1,
           pontuacao: { $round: ["$pontuacao", 2] },
           taxaConformidade: { $round: ["$taxaConformidade", 2] },
           custoRuptura: { $round: ["$custoRuptura", 2] },
+          percentualConclusao: {
+            $cond: [
+              { $eq: ["$percentualConclusao", null] },
+              null,
+              { $round: ["$percentualConclusao", 2] },
+            ],
+          },
+          percentualRestante: {
+            $cond: [
+              { $eq: ["$percentualRestante", null] },
+              null,
+              { $round: ["$percentualRestante", 2] },
+            ],
+          },
+          totalAuditorias: 1,
+          auditoriasPorTipo: {
+            ETIQUETA: "$auditoriasEtiqueta",
+            PRESENCA: "$auditoriasPresenca",
+            RUPTURA: "$auditoriasRuptura",
+          },
           auditoriasCanceladas: 1,
         },
       },

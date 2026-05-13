@@ -18,6 +18,7 @@ import colaboradoresRoutes from "./routes/colaboradores.routes.js";
 import auditoriasRoutes from "./routes/auditorias.routes.js";
 import metricasRoutes from "./routes/metricas.routes.js";
 import conquistasRoutes from "./routes/conquistas.routes.js";
+import configRoutes from "./routes/config.routes.js";
 import { semearConquistasSeNecessario } from "./services/conquistasSeed.js";
 
 async function bootstrap() {
@@ -82,6 +83,7 @@ async function bootstrap() {
   app.use("/api/auditorias", auditoriasRoutes);
   app.use("/api/metricas", metricasRoutes);
   app.use("/api/conquistas", conquistasRoutes);
+  app.use("/api/config", configRoutes);
 
   app.use((req, res) =>
     res.status(404).json({ error: "Rota não encontrada", path: req.path }),
