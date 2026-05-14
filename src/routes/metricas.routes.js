@@ -425,6 +425,8 @@ async function carregarItensRelatorioCorredor({
       custoRuptura: 1,
       pontos: 1,
       estoqueAtual: 1,
+      diasSemVenda: 1,
+      ultimaCompraEm: 1,
       data: 1,
       auditadoEm: 1,
       updatedAt: 1,
@@ -524,6 +526,26 @@ async function montarRelatorioCorredores({
   return { periodo: { inicio, fim }, items: itemsResumo };
 }
 
+function calcularDiasSemVendaRelatorio(item) {
+  const diasSemVenda = Number(item?.diasSemVenda);
+  if (Number.isFinite(diasSemVenda) && diasSemVenda >= 0) {
+    return Math.round(diasSemVenda);
+  }
+
+  const ultimaVenda = item?.ultimaCompraEm ? dayjs(item.ultimaCompraEm) : null;
+  if (!ultimaVenda?.isValid()) return null;
+
+  const referenciaBase =
+    item?.auditadoEm || item?.data || item?.updatedAt || item?.createdAt;
+  const referencia = referenciaBase ? dayjs(referenciaBase) : dayjs();
+  if (!referencia.isValid()) return null;
+
+  return Math.max(
+    referencia.startOf("day").diff(ultimaVenda.startOf("day"), "day"),
+    0,
+  );
+}
+
 function serializarProdutoRelatorioCorredor(item, cls) {
   return {
     _id: item._id,
@@ -538,6 +560,8 @@ function serializarProdutoRelatorioCorredor(item, cls) {
     conforme: cls.conforme,
     foiLido: Boolean(cls.conta),
     estoqueAtual: item.estoqueAtual,
+    diasSemVenda: calcularDiasSemVendaRelatorio(item),
+    ultimaVendaEm: item.ultimaCompraEm || null,
     auditadoEm:
       item.auditadoEm || item.updatedAt || item.createdAt || item.data || null,
   };
