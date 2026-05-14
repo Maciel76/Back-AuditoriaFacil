@@ -1180,12 +1180,62 @@ router.get(
     }
 
     const conquistas = await resolverConquistasPortal(dados.colaborador || {});
+    const rankingGeral = await calcularRankingGeralPortal(
+      req.escopoLojaId,
+      req.params.id,
+    );
 
     res.json({
       ...dados,
       colaborador: montarCabecalhoPerfilPublicoColaborador(dados.colaborador),
       conquistas,
+      rankingGeral,
     });
+  }),
+);
+
+// ============ RANKING GERAL DO PORTAL (por mais itens lidos, histórico) ============
+async function calcularRankingGeralPortal(escopoLojaId, colaboradorId) {
+  const lojaId = escopoLojaId
+    ? new mongoose.Types.ObjectId(escopoLojaId)
+    : null;
+
+  const matchBase = { colaborador: { $ne: null }, cancelada: { $ne: true } };
+  if (lojaId) matchBase.loja = lojaId;
+
+  const ranking = await MetricaDiaria.aggregate([
+    { $match: matchBase },
+    {
+      $group: {
+        _id: "$colaborador",
+        totalLidos: { $sum: "$totalLidos" },
+      },
+    },
+    { $sort: { totalLidos: -1 } },
+  ]);
+
+  const idStr = colaboradorId.toString();
+  const posicao = ranking.findIndex((r) => r._id.toString() === idStr) + 1;
+  const totalColaboradores = ranking.length;
+  const totalItensLidos =
+    ranking.find((r) => r._id.toString() === idStr)?.totalLidos || 0;
+
+  return {
+    posicao: posicao > 0 ? posicao : null,
+    totalColaboradores,
+    totalItensLidos,
+  };
+}
+
+router.get(
+  "/portal/me/ranking-geral",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const rankingGeral = await calcularRankingGeralPortal(
+      req.escopoLojaId,
+      req.colaborador._id,
+    );
+    res.json(rankingGeral);
   }),
 );
 
