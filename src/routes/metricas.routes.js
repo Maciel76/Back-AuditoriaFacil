@@ -302,6 +302,301 @@ async function montarRelatorioDimensao({
   return { periodo: { inicio, fim }, items };
 }
 
+function criarResumoRelatorioCorredor(local) {
+  return {
+    local,
+    totalItens: 0,
+    totalLidos: 0,
+    conformes: 0,
+    naoConformes: 0,
+    custoRuptura: 0,
+    pontuacao: 0,
+    ultimaAuditoriaEm: null,
+    tipos: new Set(),
+    participantesMap: new Map(),
+  };
+}
+
+function atualizarMetricasRelatorioCorredor(resumo, item, cls) {
+  if (item?.tipo) resumo.tipos.add(item.tipo);
+  resumo.custoRuptura += Number(item?.custoRuptura || 0);
+  resumo.pontuacao += Number(item?.pontos || 0);
+
+  const dataMovimento =
+    item?.auditadoEm ||
+    item?.updatedAt ||
+    item?.createdAt ||
+    item?.data ||
+    null;
+  if (
+    dataMovimento &&
+    (!resumo.ultimaAuditoriaEm ||
+      new Date(dataMovimento) > new Date(resumo.ultimaAuditoriaEm))
+  ) {
+    resumo.ultimaAuditoriaEm = dataMovimento;
+  }
+
+  if (cls.conforme !== null) resumo.totalItens += 1;
+  if (cls.conta) resumo.totalLidos += 1;
+  if (cls.conta && cls.conforme === true) resumo.conformes += 1;
+  if (cls.conta && cls.conforme === false) resumo.naoConformes += 1;
+}
+
+function finalizarResumoRelatorioCorredor(resumo) {
+  const participantes = Array.from(resumo.participantesMap.values())
+    .filter((participante) => participante.totalLidos > 0)
+    .sort((a, b) => {
+      if ((a.totalLidos || 0) !== (b.totalLidos || 0)) {
+        return (b.totalLidos || 0) - (a.totalLidos || 0);
+      }
+      return a.nome.localeCompare(b.nome, "pt-BR");
+    })
+    .map((participante) => ({
+      nome: participante.nome,
+      codigoExterno: participante.codigoExterno,
+      avatarUrl: participante.avatarUrl,
+      totalItens: participante.totalItens,
+      totalLidos: participante.totalLidos,
+      conformes: participante.conformes,
+      naoConformes: participante.naoConformes,
+    }));
+
+  const taxaConformidade =
+    resumo.totalItens > 0
+      ? Number(((resumo.totalLidos / resumo.totalItens) * 100).toFixed(2))
+      : 0;
+
+  return {
+    nome: resumo.local,
+    totalItens: resumo.totalItens,
+    totalLidos: resumo.totalLidos,
+    conformes: resumo.conformes,
+    naoConformes: resumo.naoConformes,
+    semLeitura: Math.max(resumo.totalItens - resumo.totalLidos, 0),
+    tipos: Array.from(resumo.tipos),
+    ultimaAuditoriaEm: resumo.ultimaAuditoriaEm,
+    custoRuptura: Number(resumo.custoRuptura.toFixed(2)),
+    pontuacao: Number(resumo.pontuacao.toFixed(2)),
+    taxaConformidade,
+    colaboradores: participantes,
+    totalColaboradores: participantes.length,
+  };
+}
+
+async function carregarItensRelatorioCorredor({
+  escopoLojaId,
+  periodo,
+  tipo,
+  dataInicio,
+  dataFim,
+  matchExtra = {},
+}) {
+  const matchBase = {};
+  if (escopoLojaId) matchBase.loja = new mongoose.Types.ObjectId(escopoLojaId);
+  if (tipo) matchBase.tipo = tipo;
+
+  const { inicio, fim } = await intervaloPeriodo(periodo, {
+    dataInicio,
+    dataFim,
+    model: AuditItem,
+    match: { ...matchBase, ...FILTRO_ITENS_ATIVOS },
+  });
+
+  const match = {
+    ...matchBase,
+    ...FILTRO_ITENS_ATIVOS,
+    ...matchExtra,
+    data: { $gte: inicio, $lte: fim },
+  };
+
+  const items = await AuditItem.find(match)
+    .select({
+      _id: 1,
+      tipo: 1,
+      situacao: 1,
+      local: 1,
+      codigo: 1,
+      produto: 1,
+      classeRaiz: 1,
+      setor: 1,
+      colaborador: 1,
+      colaboradorCodigo: 1,
+      colaboradorNome: 1,
+      custoRuptura: 1,
+      pontos: 1,
+      estoqueAtual: 1,
+      data: 1,
+      auditadoEm: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .lean();
+
+  return { inicio, fim, items };
+}
+
+async function montarRelatorioCorredores({
+  escopoLojaId,
+  periodo,
+  tipo,
+  dataInicio,
+  dataFim,
+}) {
+  const { inicio, fim, items } = await carregarItensRelatorioCorredor({
+    escopoLojaId,
+    periodo,
+    tipo,
+    dataInicio,
+    dataFim,
+  });
+
+  const corredoresMap = new Map();
+  const colaboradoresIds = new Set();
+
+  for (const item of items) {
+    const local = normalizarLocalCorredor(item.local);
+    const cls = classificar(item.tipo, item.situacao);
+    const corredorAtual =
+      corredoresMap.get(local) || criarResumoRelatorioCorredor(local);
+
+    atualizarMetricasRelatorioCorredor(corredorAtual, item, cls);
+
+    const participanteId = item.colaborador ? String(item.colaborador) : null;
+    const participanteKey =
+      participanteId ||
+      `sem:${item.colaboradorCodigo || item.colaboradorNome || "colaborador"}`;
+    const participanteAtual = corredorAtual.participantesMap.get(
+      participanteKey,
+    ) || {
+      colaboradorId: participanteId,
+      codigoExterno: item.colaboradorCodigo || "",
+      nome: item.colaboradorNome || "Sem colaborador",
+      avatarUrl: "",
+      totalItens: 0,
+      totalLidos: 0,
+      conformes: 0,
+      naoConformes: 0,
+    };
+
+    if (cls.conforme !== null) participanteAtual.totalItens += 1;
+    if (cls.conta) participanteAtual.totalLidos += 1;
+    if (cls.conta && cls.conforme === true) participanteAtual.conformes += 1;
+    if (cls.conta && cls.conforme === false)
+      participanteAtual.naoConformes += 1;
+
+    corredorAtual.participantesMap.set(participanteKey, participanteAtual);
+    corredoresMap.set(local, corredorAtual);
+
+    if (participanteId) colaboradoresIds.add(participanteId);
+  }
+
+  if (colaboradoresIds.size) {
+    const colaboradores = await Colaborador.find({
+      _id: { $in: Array.from(colaboradoresIds) },
+    })
+      .select({ _id: 1, avatarUrl: 1 })
+      .lean();
+    const avatarPorColaborador = new Map(
+      colaboradores.map((colaborador) => [
+        String(colaborador._id),
+        colaborador.avatarUrl || "",
+      ]),
+    );
+
+    for (const corredor of corredoresMap.values()) {
+      for (const participante of corredor.participantesMap.values()) {
+        if (participante.colaboradorId) {
+          participante.avatarUrl =
+            avatarPorColaborador.get(participante.colaboradorId) || "";
+        }
+      }
+    }
+  }
+
+  const itemsResumo = Array.from(corredoresMap.values())
+    .map((corredor) => finalizarResumoRelatorioCorredor(corredor))
+    .filter((corredor) => corredor.totalItens > 0)
+    .sort(
+      (a, b) =>
+        b.totalLidos - a.totalLidos || a.nome.localeCompare(b.nome, "pt-BR"),
+    );
+
+  return { periodo: { inicio, fim }, items: itemsResumo };
+}
+
+function serializarProdutoRelatorioCorredor(item, cls) {
+  return {
+    _id: item._id,
+    codigo: item.codigo || "-",
+    produto: item.produto || "Produto sem descrição",
+    classeRaiz: item.classeRaiz || "",
+    setor: item.setor || "",
+    colaboradorNome: item.colaboradorNome || "Sem colaborador",
+    colaboradorCodigo: item.colaboradorCodigo || "",
+    situacao: item.situacao || "Sem situação",
+    tipo: item.tipo || "",
+    conforme: cls.conforme,
+    foiLido: Boolean(cls.conta),
+    estoqueAtual: item.estoqueAtual,
+    auditadoEm:
+      item.auditadoEm || item.updatedAt || item.createdAt || item.data || null,
+  };
+}
+
+async function montarDetalheRelatorioCorredor({
+  escopoLojaId,
+  periodo,
+  tipo,
+  dataInicio,
+  dataFim,
+  corredor,
+}) {
+  const { inicio, fim, items } = await carregarItensRelatorioCorredor({
+    escopoLojaId,
+    periodo,
+    tipo,
+    dataInicio,
+    dataFim,
+    matchExtra: montarMatchLocalCorredor(corredor),
+  });
+
+  const itensLidos = [];
+  const itensNaoLidos = [];
+  let semEstoqueIgnorados = 0;
+
+  for (const item of items) {
+    const cls = classificar(item.tipo, item.situacao);
+    if (cls.conforme === null) {
+      semEstoqueIgnorados += 1;
+      continue;
+    }
+
+    const produto = serializarProdutoRelatorioCorredor(item, cls);
+    if (cls.conta) itensLidos.push(produto);
+    else itensNaoLidos.push(produto);
+  }
+
+  itensLidos.sort((a, b) => {
+    const dataA = a.auditadoEm ? new Date(a.auditadoEm).getTime() : 0;
+    const dataB = b.auditadoEm ? new Date(b.auditadoEm).getTime() : 0;
+    if (dataA !== dataB) return dataB - dataA;
+    return `${a.produto}`.localeCompare(`${b.produto}`, "pt-BR");
+  });
+  itensNaoLidos.sort(
+    (a, b) =>
+      `${a.produto}`.localeCompare(`${b.produto}`, "pt-BR") ||
+      `${a.codigo}`.localeCompare(`${b.codigo}`, "pt-BR"),
+  );
+
+  return {
+    periodo: { inicio, fim },
+    corredor,
+    semEstoqueIgnorados,
+    itensLidos,
+    itensNaoLidos,
+  };
+}
+
 async function montarPerfilColaborador({
   colaboradorId,
   escopoLojaId,
@@ -1676,10 +1971,7 @@ router.get(
               { $eq: ["$percentualConclusao", null] },
               null,
               {
-                $max: [
-                  0,
-                  { $subtract: [100, "$percentualConclusao"] },
-                ],
+                $max: [0, { $subtract: [100, "$percentualConclusao"] }],
               },
             ],
           },
@@ -2031,14 +2323,33 @@ router.get(
   "/relatorios/corredores",
   escopoLoja,
   asyncHandler(async (req, res) => {
-    const dados = await montarRelatorioDimensao({
+    const dados = await montarRelatorioCorredores({
       escopoLojaId: req.escopoLojaId,
       periodo: req.query.periodo || "1d",
       tipo: req.query.tipo,
       dataInicio: req.query.dataInicio,
       dataFim: req.query.dataFim,
-      campo: "local",
-      fallback: "Sem corredor",
+    });
+    res.json(dados);
+  }),
+);
+
+router.get(
+  "/relatorios/corredores/detalhe",
+  escopoLoja,
+  asyncHandler(async (req, res) => {
+    const corredor = String(req.query.corredor || "").trim();
+    if (!corredor) {
+      return res.status(400).json({ error: "Corredor é obrigatório." });
+    }
+
+    const dados = await montarDetalheRelatorioCorredor({
+      escopoLojaId: req.escopoLojaId,
+      periodo: req.query.periodo || "1d",
+      tipo: req.query.tipo,
+      dataInicio: req.query.dataInicio,
+      dataFim: req.query.dataFim,
+      corredor,
     });
     res.json(dados);
   }),
