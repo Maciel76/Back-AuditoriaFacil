@@ -6,6 +6,7 @@ import { Loja } from "../models/Loja.js";
 import { MetricaDiaria } from "../models/MetricaDiaria.js";
 import { avaliarConquistas } from "./conquistasService.js";
 import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
+import { calcularMapaTotalLiderPodium } from "./podiumMetricas.js";
 
 function calcNivel(pontuacao) {
   return Math.max(1, Math.floor(Number(pontuacao || 0) / 500) + 1);
@@ -25,6 +26,9 @@ const METRICA_ZERADA = {
 
 export async function recomputarAcumuladosLoja(lojaId) {
   const lojaObjectId = new mongoose.Types.ObjectId(lojaId);
+  const totaisLiderPodium = await calcularMapaTotalLiderPodium({
+    lojaId: lojaObjectId,
+  });
 
   const agregadosColaboradores = await MetricaDiaria.aggregate([
     {
@@ -132,6 +136,9 @@ export async function recomputarAcumuladosLoja(lojaId) {
     );
     colaborador.totalItensParticipacaoLoja = Number(
       agregado?.totalItensParticipacaoLoja || 0,
+    );
+    colaborador.totalLiderPodium = Number(
+      totaisLiderPodium.get(String(colaborador._id)) || 0,
     );
     colaborador.metricasPorTipo = normalizarMetricasPorTipo({
       ETIQUETA: {

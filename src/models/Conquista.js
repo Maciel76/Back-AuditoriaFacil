@@ -33,6 +33,7 @@ export const METRICAS_SUPORTADAS = [
   "totalItensConformes",
   "totalAuditorias",
   "totalItensParticipacaoLoja",
+  "totalLiderPodium",
   "taxaConformidadeAcumulada",
   "pontuacao",
   "nivel",

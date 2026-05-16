@@ -30,6 +30,7 @@ import { Colaborador } from "../src/models/Colaborador.js";
 import { Loja } from "../src/models/Loja.js";
 import { avaliarConquistas } from "../src/services/conquistasService.js";
 import { normalizarMetricasPorTipo } from "../src/services/colaboradorMetricas.js";
+import { calcularMapaTotalLiderPodium } from "../src/services/podiumMetricas.js";
 import { classificar } from "../src/services/regras.js";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -263,6 +264,7 @@ async function passo3_recalcularColaboradores() {
   console.log(
     "\n[3] Recalculando acumulados de Colaborador a partir de MetricaDiaria...",
   );
+  const totaisLiderPodium = await calcularMapaTotalLiderPodium();
   const colaboradores = await Colaborador.find();
   console.log(`    ${colaboradores.length} colaborador(es) encontrados.`);
 
@@ -349,6 +351,9 @@ async function passo3_recalcularColaboradores() {
     const a = agg[0] || {};
     const novoTotalAuditorias = a.totalAuditorias || 0;
     const novaPontuacao = Number((a.pontuacao || 0).toFixed(2));
+    const novoTotalLiderPodium = Number(
+      totaisLiderPodium.get(String(colab._id)) || 0,
+    );
 
     if (DRY_RUN) {
       console.log(
@@ -356,7 +361,8 @@ async function passo3_recalcularColaboradores() {
           `lidos ${colab.totalItensLidos} -> ${a.totalLidos || 0}, ` +
           `conformes ${colab.totalItensConformes} -> ${a.totalConformes || 0}, ` +
           `pts ${colab.pontuacao} -> ${novaPontuacao}, ` +
-          `aud ${colab.totalAuditorias} -> ${novoTotalAuditorias}`,
+          `aud ${colab.totalAuditorias} -> ${novoTotalAuditorias}, ` +
+          `podio ${colab.totalLiderPodium || 0} -> ${novoTotalLiderPodium}`,
       );
       continue;
     }
@@ -365,6 +371,7 @@ async function passo3_recalcularColaboradores() {
     colab.totalItensConformes = a.totalConformes || 0;
     colab.totalAuditorias = novoTotalAuditorias;
     colab.totalItensParticipacaoLoja = a.totalItensParticipacaoLoja || 0;
+    colab.totalLiderPodium = novoTotalLiderPodium;
     colab.metricasPorTipo = normalizarMetricasPorTipo({
       ETIQUETA: {
         totalAuditorias: a.auditoriasEtiqueta || 0,

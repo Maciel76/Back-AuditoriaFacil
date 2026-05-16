@@ -380,6 +380,40 @@ export const CONQUISTAS_PADRAO = [
       },
     ],
   },
+  {
+    codigo: "LIDER_PODIUM",
+    nome: "Líder do Pódio",
+    descricao:
+      "Termine o dia entre os 3 primeiros do pódio da loja, considerando quem mais leu itens no dia.",
+    icone: "🥇",
+    categoria: "ESPECIAL",
+    metricaBase: "totalLiderPodium",
+    recorrente: true,
+    ordem: 14,
+    tiers: [
+      { nivel: "comum", meta: 1, xpBonus: 20, titulo: "Primeiro Pódio" },
+      { nivel: "raro", meta: 10, xpBonus: 60, titulo: "Top 3 Constante" },
+      { nivel: "epico", meta: 20, xpBonus: 120, titulo: "Nome do Pódio" },
+      {
+        nivel: "lendario",
+        meta: 40,
+        xpBonus: 260,
+        titulo: "Presença de Pódio",
+      },
+      {
+        nivel: "diamante",
+        meta: 80,
+        xpBonus: 500,
+        titulo: "Elite do Pódio",
+      },
+      {
+        nivel: "mitico",
+        meta: 100,
+        xpBonus: 900,
+        titulo: "Lenda do Top 3",
+      },
+    ],
+  },
 ];
 
 for (const conquista of CONQUISTAS_PADRAO) {
@@ -409,9 +443,7 @@ export async function semearConquistasSeNecessario() {
 
 export async function sincronizarConquistasPadrao() {
   const existentes = await Conquista.find({}, { codigo: 1, tiers: 1 }).lean();
-  const mapaExistentes = new Map(
-    existentes.map((item) => [item.codigo, item]),
-  );
+  const mapaExistentes = new Map(existentes.map((item) => [item.codigo, item]));
   const faltantes = [];
   const atualizacoes = [];
 

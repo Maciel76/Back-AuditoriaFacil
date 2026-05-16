@@ -57,6 +57,7 @@ const ColaboradorSchema = new mongoose.Schema(
     totalItensLidos: { type: Number, default: 0 },
     totalItensConformes: { type: Number, default: 0 },
     totalItensParticipacaoLoja: { type: Number, default: 0 },
+    totalLiderPodium: { type: Number, default: 0 },
     metricasPorTipo: {
       ETIQUETA: { type: MetricaTipoSchema, default: () => ({}) },
       PRESENCA: { type: MetricaTipoSchema, default: () => ({}) },

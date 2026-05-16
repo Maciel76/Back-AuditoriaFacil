@@ -38,6 +38,8 @@ function lerMetrica(colab, nome, tipoAuditoria = null) {
       return metricaTipo?.totalAuditorias ?? (colab.totalAuditorias || 0);
     case "totalItensParticipacaoLoja":
       return colab.totalItensParticipacaoLoja || 0;
+    case "totalLiderPodium":
+      return colab.totalLiderPodium || 0;
     case "taxaConformidadeAcumulada": {
       const lidos =
         metricaTipo?.totalItensLidos ?? (colab.totalItensLidos || 0);

@@ -8,6 +8,7 @@ import { lerPlanilha } from "./planilhaParser.js";
 import { classificar, REGRAS } from "./regras.js";
 import { avaliarConquistas } from "./conquistasService.js";
 import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
+import { calcularMapaTotalLiderPodium } from "./podiumMetricas.js";
 import { zerarMetricasCanceladas } from "./auditoriaCancelamento.js";
 
 function reportProgress(onProgress, progress, stage) {
@@ -513,6 +514,24 @@ export async function processarPlanilha({
         });
       }
     }
+  }
+
+  reportProgress(onProgress, 98, "Sincronizando pódio");
+  const totaisLiderPodium = await calcularMapaTotalLiderPodium({ lojaId });
+  const colaboradoresLoja = await Colaborador.find({ loja: lojaId });
+  for (const colab of colaboradoresLoja) {
+    const novoTotalLiderPodium = Number(
+      totaisLiderPodium.get(String(colab._id)) || 0,
+    );
+    if (Number(colab.totalLiderPodium || 0) === novoTotalLiderPodium) {
+      continue;
+    }
+
+    colab.totalLiderPodium = novoTotalLiderPodium;
+    colab.nivel = calcNivel(colab.pontuacao);
+    await avaliarConquistas(colab);
+    colab.nivel = calcNivel(colab.pontuacao);
+    await colab.save();
   }
 
   // Atualiza pontuação da loja
