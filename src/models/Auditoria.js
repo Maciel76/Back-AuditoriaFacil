@@ -11,9 +11,9 @@ export const TIPOS_AUDITORIA = Object.freeze({
  */
 const AuditoriaSchema = new mongoose.Schema(
   {
-    loja: { type: mongoose.Schema.Types.ObjectId, ref: 'Loja', required: true, index: true },
-    tipo: { type: String, enum: Object.values(TIPOS_AUDITORIA), required: true, index: true },
-    data: { type: Date, required: true, index: true }, // dia da auditoria (00:00 UTC do dia detectado)
+    loja: { type: mongoose.Schema.Types.ObjectId, ref: 'Loja', required: true },
+    tipo: { type: String, enum: Object.values(TIPOS_AUDITORIA), required: true },
+    data: { type: Date, required: true }, // dia da auditoria (00:00 UTC do dia detectado)
     arquivoOriginal: String,
     enviadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario' },
 
@@ -45,7 +45,6 @@ const AuditoriaSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AuditoriaSchema.index({ loja: 1, tipo: 1, data: 1 }, { unique: true });
 AuditoriaSchema.index({ loja: 1, tipo: 1, data: 1 }, { unique: true });
 
 export const Auditoria = mongoose.model('Auditoria', AuditoriaSchema);

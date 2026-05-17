@@ -339,12 +339,22 @@ async function montarPerfilLoja({
     data: { $gte: inicio, $lte: fim },
   };
 
+  const calcTaxaPerfil = (tipoAtual, row) => {
+    if (tipoAtual === 'ETIQUETA') {
+      return row.totalItensAuditaveis > 0
+        ? Number(((row.totalLidos / row.totalItensAuditaveis) * 100).toFixed(2)) : 0;
+    }
+    return row.totalLidos > 0
+      ? Number(((row.totalConformes / row.totalLidos) * 100).toFixed(2)) : 0;
+  };
+
   const porTipo = await MetricaDiaria.aggregate([
     { $match: matchMetricas },
     {
       $group: {
         _id: "$tipo",
         totalLidos: { $sum: "$totalLidos" },
+        totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
         totalConformes: { $sum: "$totalConformes" },
         totalNaoConformes: { $sum: "$totalNaoConformes" },
         pontuacao: { $sum: "$pontuacao" },
@@ -360,19 +370,17 @@ async function montarPerfilLoja({
     totaisPorTipo[tipoAuditoria] = atual
       ? {
           totalLidos: atual.totalLidos,
+          totalItensAuditaveis: atual.totalItensAuditaveis,
           totalConformes: atual.totalConformes,
           totalNaoConformes: atual.totalNaoConformes,
           pontuacao: Number(atual.pontuacao.toFixed(2)),
           custoRuptura: Number(atual.custoRuptura.toFixed(2)),
-          taxaConformidade: atual.totalLidos
-            ? Number(
-                ((atual.totalConformes / atual.totalLidos) * 100).toFixed(2),
-              )
-            : 0,
+          taxaConformidade: calcTaxaPerfil(tipoAuditoria, atual),
           dias: atual.dias,
         }
       : {
           totalLidos: 0,
+          totalItensAuditaveis: 0,
           totalConformes: 0,
           totalNaoConformes: 0,
           pontuacao: 0,
@@ -385,6 +393,7 @@ async function montarPerfilLoja({
   const totalGeral = Object.values(totaisPorTipo).reduce(
     (acumulado, item) => ({
       totalLidos: acumulado.totalLidos + item.totalLidos,
+      totalItensAuditaveis: acumulado.totalItensAuditaveis + item.totalItensAuditaveis,
       totalConformes: acumulado.totalConformes + item.totalConformes,
       totalNaoConformes: acumulado.totalNaoConformes + item.totalNaoConformes,
       pontuacao: acumulado.pontuacao + item.pontuacao,
@@ -392,6 +401,7 @@ async function montarPerfilLoja({
     }),
     {
       totalLidos: 0,
+      totalItensAuditaveis: 0,
       totalConformes: 0,
       totalNaoConformes: 0,
       pontuacao: 0,
@@ -400,10 +410,18 @@ async function montarPerfilLoja({
   );
   totalGeral.pontuacao = Number(totalGeral.pontuacao.toFixed(2));
   totalGeral.custoRuptura = Number(totalGeral.custoRuptura.toFixed(2));
-  totalGeral.taxaConformidade = totalGeral.totalLidos
-    ? Number(
-        ((totalGeral.totalConformes / totalGeral.totalLidos) * 100).toFixed(2),
-      )
+  // Taxa geral: soma ponderada. ETIQUETA usa lidos/auditáveis; demais usam conformes/lidos.
+  const etiquetaRow = totaisPorTipo['ETIQUETA'];
+  const outrosLidos = totalGeral.totalLidos - (etiquetaRow?.totalLidos || 0);
+  const outrosConformes = totalGeral.totalConformes - (etiquetaRow?.totalConformes || 0);
+  const taxaEtiqueta = calcTaxaPerfil('ETIQUETA', etiquetaRow || { totalLidos: 0, totalItensAuditaveis: 0 });
+  const taxaOutros = outrosLidos > 0 ? (outrosConformes / outrosLidos) * 100 : 0;
+  const pesoTotal = (etiquetaRow?.totalItensAuditaveis || 0) + outrosLidos;
+  totalGeral.taxaConformidade = pesoTotal > 0
+    ? Number((
+        (taxaEtiqueta * (etiquetaRow?.totalItensAuditaveis || 0) +
+         taxaOutros * outrosLidos) / pesoTotal
+      ).toFixed(2))
     : 0;
 
   const serie = await MetricaDiaria.aggregate([
@@ -520,6 +538,7 @@ router.get(
     const matchBase = { colaborador: null };
     if (req.escopoLojaId)
       matchBase.loja = new mongoose.Types.ObjectId(req.escopoLojaId);
+    if (req.query.tipo) matchBase.tipo = req.query.tipo;
 
     const { inicio, fim } = await intervaloPeriodo(periodo, {
       dataInicio: req.query.dataInicio,
@@ -535,6 +554,7 @@ router.get(
       {
         $group: {
           _id: "$tipo",
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
           totalLidos: { $sum: "$totalLidos" },
           totalConformes: { $sum: "$totalConformes" },
           totalNaoConformes: { $sum: "$totalNaoConformes" },
@@ -548,19 +568,31 @@ router.get(
     const totaisPorTipo = {};
     for (const t of Object.values(TIPOS_AUDITORIA)) {
       const r = porTipo.find((p) => p._id === t);
+      // ETIQUETA: taxa = lidos / auditaveis (cobertura de leitura)
+      // PRESENCA/RUPTURA: taxa = conformes / lidos (qualidade)
+      const calcTaxa = (tipo, row) => {
+        if (tipo === 'ETIQUETA') {
+          return row.totalItensAuditaveis > 0
+            ? Number(((row.totalLidos / row.totalItensAuditaveis) * 100).toFixed(2))
+            : 0;
+        }
+        return row.totalLidos > 0
+          ? Number(((row.totalConformes / row.totalLidos) * 100).toFixed(2))
+          : 0;
+      };
       totaisPorTipo[t] = r
         ? {
+            totalItensAuditaveis: r.totalItensAuditaveis,
             totalLidos: r.totalLidos,
             totalConformes: r.totalConformes,
             totalNaoConformes: r.totalNaoConformes,
             pontuacao: Number(r.pontuacao.toFixed(2)),
             custoRuptura: Number(r.custoRuptura.toFixed(2)),
-            taxaConformidade: r.totalLidos
-              ? Number(((r.totalConformes / r.totalLidos) * 100).toFixed(2))
-              : 0,
+            taxaConformidade: calcTaxa(t, r),
             dias: r.dias,
           }
         : {
+            totalItensAuditaveis: 0,
             totalLidos: 0,
             totalConformes: 0,
             totalNaoConformes: 0,
@@ -573,6 +605,7 @@ router.get(
 
     const totalGeral = Object.values(totaisPorTipo).reduce(
       (a, b) => ({
+        totalItensAuditaveis: a.totalItensAuditaveis + b.totalItensAuditaveis,
         totalLidos: a.totalLidos + b.totalLidos,
         totalConformes: a.totalConformes + b.totalConformes,
         totalNaoConformes: a.totalNaoConformes + b.totalNaoConformes,
@@ -580,6 +613,7 @@ router.get(
         custoRuptura: a.custoRuptura + b.custoRuptura,
       }),
       {
+        totalItensAuditaveis: 0,
         totalLidos: 0,
         totalConformes: 0,
         totalNaoConformes: 0,
@@ -587,13 +621,27 @@ router.get(
         custoRuptura: 0,
       },
     );
-    totalGeral.taxaConformidade = totalGeral.totalLidos
-      ? Number(
-          ((totalGeral.totalConformes / totalGeral.totalLidos) * 100).toFixed(
-            2,
-          ),
-        )
-      : 0;
+    // Taxa geral: media ponderada por volume de cada tipo
+    // ETIQUETA usa lidos/auditaveis; PRESENCA/RUPTURA usam conformes/lidos
+    {
+      let numerador = 0;
+      let denominador = 0;
+      const et = totaisPorTipo['ETIQUETA'];
+      if (et && et.totalItensAuditaveis > 0) {
+        numerador += et.totalLidos;
+        denominador += et.totalItensAuditaveis;
+      }
+      for (const t of ['PRESENCA', 'RUPTURA']) {
+        const r = totaisPorTipo[t];
+        if (r && r.totalLidos > 0) {
+          numerador += r.totalConformes;
+          denominador += r.totalLidos;
+        }
+      }
+      totalGeral.taxaConformidade = denominador > 0
+        ? Number(((numerador / denominador) * 100).toFixed(2))
+        : 0;
+    }
 
     // série temporal por dia
     const serie = await MetricaDiaria.aggregate([
@@ -618,12 +666,20 @@ router.get(
         ? { loja: req.escopoLojaId, ativo: true }
         : { ativo: true },
     );
-    const ultimasAuditorias = await Auditoria.find(
-      req.escopoLojaId ? { loja: req.escopoLojaId } : {},
-    )
+    const filtroAuditorias = req.escopoLojaId ? { loja: req.escopoLojaId } : {};
+    if (req.query.tipo) filtroAuditorias.tipo = req.query.tipo;
+    const ultimasAuditorias = await Auditoria.find(filtroAuditorias)
       .sort({ data: -1, createdAt: -1 })
       .limit(5)
       .lean();
+
+    // Contagens específicas de ETIQUETA no período
+    const matchEtiquetaBase = { tipo: 'ETIQUETA', data: { $gte: inicio, $lte: fim } };
+    if (req.escopoLojaId) matchEtiquetaBase.loja = new mongoose.Types.ObjectId(req.escopoLojaId);
+    const [totalDesatualizados, totalNaoLidos] = await Promise.all([
+      AuditItem.countDocuments({ ...matchEtiquetaBase, situacao: 'Desatualizado' }),
+      AuditItem.countDocuments({ ...matchEtiquetaBase, situacao: 'Não lidos com estoque' }),
+    ]);
 
     res.json({
       periodo: { inicio, fim, label: req.query.periodo || "1d" },
@@ -631,6 +687,8 @@ router.get(
       totalGeral,
       serie,
       colaboradoresAtivos,
+      totalDesatualizados,
+      totalNaoLidos,
       ultimasAuditorias,
     });
   }),
@@ -751,6 +809,7 @@ router.get(
         $group: {
           _id: "$loja",
           totalLidos: { $sum: "$totalLidos" },
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
           totalConformes: { $sum: "$totalConformes" },
           totalNaoConformes: { $sum: "$totalNaoConformes" },
           pontuacao: { $sum: "$pontuacao" },
@@ -759,18 +818,21 @@ router.get(
       },
       {
         $addFields: {
-          taxaConformidade: {
-            $cond: [
-              { $gt: ["$totalLidos", 0] },
-              {
-                $multiply: [
-                  { $divide: ["$totalConformes", "$totalLidos"] },
-                  100,
+          taxaConformidade: tipoFilter === "ETIQUETA"
+            ? {
+                $cond: [
+                  { $gt: ["$totalItensAuditaveis", 0] },
+                  { $multiply: [{ $divide: ["$totalLidos", "$totalItensAuditaveis"] }, 100] },
+                  0,
+                ],
+              }
+            : {
+                $cond: [
+                  { $gt: ["$totalLidos", 0] },
+                  { $multiply: [{ $divide: ["$totalConformes", "$totalLidos"] }, 100] },
+                  0,
                 ],
               },
-              0,
-            ],
-          },
         },
       },
       { $sort: { pontuacao: -1 } },

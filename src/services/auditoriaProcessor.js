@@ -129,7 +129,8 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
 
   // Monta documentos AuditItem
   const docs = [];
-  let totalLidos = 0;
+  let totalLidos = 0;           // itens fisicamente lidos (conta:true)
+  let totalItensAuditaveis = 0; // itens auditaveis = lidos + Nao lidos com estoque (conforme != null)
   let totalConformes = 0;
   let totalNaoConformes = 0;
   let pontuacao = 0;
@@ -143,6 +144,7 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
     const cls = classificar(tipo, r.situacao);
     const colaboradorId = r.colaboradorCodigo ? cache.get(`${lojaId}:${r.colaboradorCodigo}`) : null;
 
+    if (cls.conforme !== null) totalItensAuditaveis += 1;
     if (cls.conta) {
       totalLidos += 1;
       if (cls.conforme === true) totalConformes += 1;
@@ -216,7 +218,11 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
     reportProgress(onProgress, 62 + ((Math.min(i + CHUNK, docs.length)) / Math.max(1, docs.length)) * 14, 'Gravando itens');
   }
 
-  const taxaConformidade = totalLidos > 0 ? (totalConformes / totalLidos) * 100 : 0;
+  // ETIQUETA: % de itens auditaveis que foram lidos (cobertura da auditoria)
+  // PRESENCA / RUPTURA: % de itens lidos que estao conformes (qualidade)
+  const taxaConformidade = tipo === 'ETIQUETA'
+    ? (totalItensAuditaveis > 0 ? (totalLidos / totalItensAuditaveis) * 100 : 0)
+    : (totalLidos > 0 ? (totalConformes / totalLidos) * 100 : 0);
 
   auditoria.totalItens = linhas.length;
   auditoria.totalLidos = totalLidos;
@@ -239,6 +245,7 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
     {
       $set: {
         totalItens: linhas.length,
+        totalItensAuditaveis,
         totalLidos,
         totalConformes,
         totalNaoConformes,
@@ -263,6 +270,7 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
       {
         $set: {
           totalItens: c.itens,
+          totalItensAuditaveis: c.itens, // por colaborador contamos so itens lidos (conta:true)
           totalLidos: c.itens,
           totalConformes: c.conformes,
           totalNaoConformes: c.naoConformes,

@@ -28,6 +28,7 @@ import { AuditItem } from '../src/models/AuditItem.js';
 import { MetricaDiaria } from '../src/models/MetricaDiaria.js';
 import { Colaborador } from '../src/models/Colaborador.js';
 import { Loja } from '../src/models/Loja.js';
+import { classificar } from '../src/services/regras.js';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -123,66 +124,110 @@ async function passo2_reconstruirMetricaDiaria() {
     const { loja, tipo, data } = g._id;
     const match = { loja, tipo, data };
 
+    // ----------------------------------------------------------------
     // Consolidado por loja (colaborador = null)
-    const totaisLoja = await AuditItem.aggregate([
+    // Agrega por situacao e usa REGRAS para calcular totais corretamente.
+    // Isso garante a mesma logica do auditoriaProcessor.js.
+    // ----------------------------------------------------------------
+    const porSituacao = await AuditItem.aggregate([
       { $match: match },
       { $group: {
-          _id: null,
-          totalItens: { $sum: 1 },
-          totalLidos: { $sum: { $cond: [{ $in: ['$conforme', [true, false]] }, 1, 0] } },
-          totalConformes: { $sum: { $cond: [{ $eq: ['$conforme', true] }, 1, 0] } },
-          totalNaoConformes: { $sum: { $cond: [{ $eq: ['$conforme', false] }, 1, 0] } },
+          _id: '$situacao',
+          count: { $sum: 1 },
           pontuacao: { $sum: { $ifNull: ['$pontos', 0] } },
           custoRuptura: { $sum: { $ifNull: ['$custoRuptura', 0] } },
       } },
     ]);
 
-    const situacoes = await AuditItem.aggregate([
-      { $match: match },
-      { $group: { _id: '$situacao', count: { $sum: 1 } } },
-    ]);
     const situacoesMap = {};
-    for (const s of situacoes) if (s._id) situacoesMap[s._id] = s.count;
+    let totalItens = 0;
+    let totalItensAuditaveis = 0; // conforme != null (exclui 'Sem Estoque')
+    let totalLidos = 0;           // conta:true (itens fisicamente lidos)
+    let totalConformes = 0;
+    let totalNaoConformes = 0;
+    let pontuacaoLoja = 0;
+    let custoRupturaLoja = 0;
 
-    const tl = totaisLoja[0] || {};
-    const taxaLoja = tl.totalLidos > 0 ? (tl.totalConformes / tl.totalLidos) * 100 : 0;
+    for (const s of porSituacao) {
+      if (!s._id) continue;
+      const cls = classificar(tipo, s._id);
+      situacoesMap[s._id] = s.count;
+      totalItens += s.count;
+      if (cls.conforme !== null) totalItensAuditaveis += s.count;
+      if (cls.conta) {
+        totalLidos += s.count;
+        if (cls.conforme === true) totalConformes += s.count;
+        else if (cls.conforme === false) totalNaoConformes += s.count;
+        pontuacaoLoja += s.pontuacao;
+      }
+      if (cls.conforme === false) custoRupturaLoja += s.custoRuptura;
+    }
+
+    // ETIQUETA: cobertura = lidos / auditaveis; PRESENCA/RUPTURA: qualidade = conformes / lidos
+    const taxaLoja = tipo === 'ETIQUETA'
+      ? (totalItensAuditaveis > 0 ? (totalLidos / totalItensAuditaveis) * 100 : 0)
+      : (totalLidos > 0 ? (totalConformes / totalLidos) * 100 : 0);
 
     await MetricaDiaria.create({
       loja, tipo, data, colaborador: null,
-      totalItens: tl.totalItens || 0,
-      totalLidos: tl.totalLidos || 0,
-      totalConformes: tl.totalConformes || 0,
-      totalNaoConformes: tl.totalNaoConformes || 0,
+      totalItens,
+      totalItensAuditaveis,
+      totalLidos,
+      totalConformes,
+      totalNaoConformes,
       taxaConformidade: Number(taxaLoja.toFixed(2)),
-      pontuacao: Number((tl.pontuacao || 0).toFixed(2)),
-      custoRuptura: Number((tl.custoRuptura || 0).toFixed(2)),
+      pontuacao: Number(pontuacaoLoja.toFixed(2)),
+      custoRuptura: Number(custoRupturaLoja.toFixed(2)),
       situacoes: situacoesMap,
     });
     stats.metricasRecriadas++;
 
+    // ----------------------------------------------------------------
     // Por colaborador
-    const porColab = await AuditItem.aggregate([
+    // ----------------------------------------------------------------
+    const porColabSituacao = await AuditItem.aggregate([
       { $match: { ...match, colaborador: { $ne: null } } },
       { $group: {
-          _id: '$colaborador',
-          totalItens: { $sum: 1 },
-          totalLidos: { $sum: { $cond: [{ $in: ['$conforme', [true, false]] }, 1, 0] } },
-          totalConformes: { $sum: { $cond: [{ $eq: ['$conforme', true] }, 1, 0] } },
-          totalNaoConformes: { $sum: { $cond: [{ $eq: ['$conforme', false] }, 1, 0] } },
+          _id: { colaborador: '$colaborador', situacao: '$situacao' },
+          count: { $sum: 1 },
           pontuacao: { $sum: { $ifNull: ['$pontos', 0] } },
       } },
     ]);
 
-    for (const c of porColab) {
+    // Agrupa por colaborador
+    const colabMap = new Map();
+    for (const row of porColabSituacao) {
+      const colabId = String(row._id.colaborador);
+      const situacao = row._id.situacao;
+      const cls = classificar(tipo, situacao);
+      if (!colabMap.has(colabId)) {
+        colabMap.set(colabId, {
+          colaborador: row._id.colaborador,
+          totalItens: 0, totalLidos: 0, totalConformes: 0, totalNaoConformes: 0, pontuacao: 0,
+        });
+      }
+      const c = colabMap.get(colabId);
+      c.totalItens += row.count;
+      if (cls.conta) {
+        c.totalLidos += row.count;
+        if (cls.conforme === true) c.totalConformes += row.count;
+        else if (cls.conforme === false) c.totalNaoConformes += row.count;
+        c.pontuacao += row.pontuacao;
+      }
+    }
+
+    for (const c of colabMap.values()) {
+      // Por colaborador: taxa e sempre conformes/lidos (qualidade do que esse auditor fez)
       const taxa = c.totalLidos > 0 ? (c.totalConformes / c.totalLidos) * 100 : 0;
       await MetricaDiaria.create({
-        loja, tipo, data, colaborador: c._id,
-        totalItens: c.totalItens || 0,
-        totalLidos: c.totalLidos || 0,
-        totalConformes: c.totalConformes || 0,
-        totalNaoConformes: c.totalNaoConformes || 0,
+        loja, tipo, data, colaborador: c.colaborador,
+        totalItens: c.totalItens,
+        totalItensAuditaveis: c.totalLidos, // por colaborador: so itens lidos (conta:true)
+        totalLidos: c.totalLidos,
+        totalConformes: c.totalConformes,
+        totalNaoConformes: c.totalNaoConformes,
         taxaConformidade: Number(taxa.toFixed(2)),
-        pontuacao: Number((c.pontuacao || 0).toFixed(2)),
+        pontuacao: Number(c.pontuacao.toFixed(2)),
       });
       stats.metricasRecriadas++;
     }
@@ -191,13 +236,13 @@ async function passo2_reconstruirMetricaDiaria() {
     await Auditoria.updateOne(
       { loja, tipo, data },
       { $set: {
-          totalItens: tl.totalItens || 0,
-          totalLidos: tl.totalLidos || 0,
-          totalConformes: tl.totalConformes || 0,
-          totalNaoConformes: tl.totalNaoConformes || 0,
+          totalItens,
+          totalLidos,
+          totalConformes,
+          totalNaoConformes,
           taxaConformidade: Number(taxaLoja.toFixed(2)),
-          pontuacao: Number((tl.pontuacao || 0).toFixed(2)),
-          custoRupturaTotal: Number((tl.custoRuptura || 0).toFixed(2)),
+          pontuacao: Number(pontuacaoLoja.toFixed(2)),
+          custoRupturaTotal: Number(custoRupturaLoja.toFixed(2)),
           situacoes: situacoesMap,
           status: 'CONCLUIDA',
       } }

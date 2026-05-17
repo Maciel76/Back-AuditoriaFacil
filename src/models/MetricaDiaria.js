@@ -12,6 +12,7 @@ const MetricaDiariaSchema = new mongoose.Schema(
     data: { type: Date, required: true, index: true }, // 00:00 UTC do dia
 
     totalItens: { type: Number, default: 0 },
+    totalItensAuditaveis: { type: Number, default: 0 }, // conforme !== null: totalLidos + "Nao lidos com estoque" p/ ETIQUETA
     totalLidos: { type: Number, default: 0 },
     totalConformes: { type: Number, default: 0 },
     totalNaoConformes: { type: Number, default: 0 },
