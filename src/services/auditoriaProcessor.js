@@ -77,6 +77,19 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
 
   // Re-upload: apaga itens antigos do mesmo dia/tipo
   let auditoria = await Auditoria.findOne({ loja: lojaId, tipo, data: dataAuditoria });
+  const isReUpload = !!auditoria;
+
+  // Captura contribuições anteriores para revertê-las dos acumulados ao substituir upload do mesmo dia
+  let prevLojaMetrica = null;
+  const prevColabMetricasMap = new Map();
+  if (isReUpload) {
+    prevLojaMetrica = await MetricaDiaria.findOne({ loja: lojaId, tipo, data: dataAuditoria, colaborador: null });
+    const prevColabMetricas = await MetricaDiaria.find({
+      loja: lojaId, tipo, data: dataAuditoria, colaborador: { $ne: null },
+    });
+    for (const m of prevColabMetricas) prevColabMetricasMap.set(String(m.colaborador), m);
+  }
+
   if (auditoria) {
     await AuditItem.deleteMany({ auditoria: auditoria._id });
     auditoria.status = 'PROCESSANDO';
@@ -267,12 +280,29 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
   // Atualiza estatísticas acumuladas dos colaboradores
   reportProgress(onProgress, 90, 'Atualizando colaboradores');
   const colaboradoresAcumulados = [...porColaborador.values()];
+  const novoColabIds = new Set([...porColaborador.keys()]);
   const passoAcumulados = Math.max(1, Math.floor(Math.max(1, colaboradoresAcumulados.length) / 5));
   for (let index = 0; index < colaboradoresAcumulados.length; index += 1) {
     const c = colaboradoresAcumulados[index];
     const colab = await Colaborador.findById(c.colaborador);
     if (!colab) continue;
-    colab.totalAuditorias += 1;
+
+    if (isReUpload) {
+      const prev = prevColabMetricasMap.get(String(c.colaborador));
+      if (prev) {
+        // Já participou deste dia: reverte contribuição anterior antes de somar a nova
+        colab.totalItensLidos = Math.max(0, colab.totalItensLidos - (prev.totalLidos || 0));
+        colab.totalItensConformes = Math.max(0, colab.totalItensConformes - (prev.totalConformes || 0));
+        colab.pontuacao = Math.max(0, Number((colab.pontuacao - (prev.pontuacao || 0)).toFixed(2)));
+        // totalAuditorias não muda: dia já foi contabilizado antes
+      } else {
+        // Colaborador novo neste re-upload: conta a participação
+        colab.totalAuditorias += 1;
+      }
+    } else {
+      colab.totalAuditorias += 1;
+    }
+
     colab.totalItensLidos += c.itens;
     colab.totalItensConformes += c.conformes;
     colab.pontuacao = Number((colab.pontuacao + c.pontuacao).toFixed(2));
@@ -284,8 +314,31 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
     }
   }
 
+  // Em re-upload: reverte colaboradores que existiam antes mas não estão na nova planilha
+  if (isReUpload) {
+    for (const [colabIdStr, prev] of prevColabMetricasMap) {
+      if (!novoColabIds.has(colabIdStr)) {
+        const colab = await Colaborador.findById(colabIdStr);
+        if (colab) {
+          colab.totalItensLidos = Math.max(0, colab.totalItensLidos - (prev.totalLidos || 0));
+          colab.totalItensConformes = Math.max(0, colab.totalItensConformes - (prev.totalConformes || 0));
+          colab.pontuacao = Math.max(0, Number((colab.pontuacao - (prev.pontuacao || 0)).toFixed(2)));
+          colab.totalAuditorias = Math.max(0, colab.totalAuditorias - 1);
+          colab.nivel = calcNivel(colab.pontuacao);
+          await colab.save();
+        }
+        // Remove MetricaDiaria do colaborador que não aparece mais nesta auditoria
+        await MetricaDiaria.deleteOne({ loja: lojaId, tipo, data: dataAuditoria, colaborador: prev.colaborador });
+      }
+    }
+  }
+
   // Atualiza pontuação da loja
   reportProgress(onProgress, 99, 'Atualizando loja');
+  if (isReUpload && prevLojaMetrica) {
+    // Desconta a contribuição do upload anterior do mesmo dia antes de somar o novo
+    loja.pontuacao = Math.max(0, Number((loja.pontuacao - (prevLojaMetrica.pontuacao || 0)).toFixed(2)));
+  }
   loja.pontuacao = Number((loja.pontuacao + pontuacao).toFixed(2));
   loja.nivel = calcNivel(loja.pontuacao);
   await loja.save();

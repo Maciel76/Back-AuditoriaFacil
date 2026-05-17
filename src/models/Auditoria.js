@@ -45,6 +45,7 @@ const AuditoriaSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AuditoriaSchema.index({ loja: 1, tipo: 1, data: -1 });
+AuditoriaSchema.index({ loja: 1, tipo: 1, data: 1 }, { unique: true });
+AuditoriaSchema.index({ loja: 1, tipo: 1, data: 1 }, { unique: true });
 
 export const Auditoria = mongoose.model('Auditoria', AuditoriaSchema);
