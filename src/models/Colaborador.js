@@ -27,7 +27,27 @@ const ColaboradorSchema = new mongoose.Schema(
     totalAuditorias: { type: Number, default: 0 },
     totalItensLidos: { type: Number, default: 0 },
     totalItensConformes: { type: Number, default: 0 },
-    conquistas: [{ codigo: String, nome: String, conquistadaEm: Date }],
+
+    /**
+     * Conquistas do colaborador no sistema de gamificação.
+     * Cada item referencia uma definição em Conquista (codigo) e mantém
+     * o tier mais alto desbloqueado, todos os tiers desbloqueados, o valor
+     * atual da métrica (progresso) e timestamps de evolução.
+     */
+    conquistas: [
+      {
+        codigo: { type: String, required: true },
+        tierAtual: {
+          type: String,
+          enum: ["comum", "raro", "epico", "lendario", "mitico", null],
+          default: null,
+        },
+        tiersDesbloqueados: { type: [String], default: [] },
+        progresso: { type: Number, default: 0 },
+        desbloqueadaEm: Date,
+        ultimaAtualizacao: Date,
+      },
+    ],
   },
   { timestamps: true }
 );

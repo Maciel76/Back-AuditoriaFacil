@@ -6,6 +6,7 @@ import { MetricaDiaria } from '../models/MetricaDiaria.js';
 import { Loja } from '../models/Loja.js';
 import { lerPlanilha } from './planilhaParser.js';
 import { classificar, REGRAS } from './regras.js';
+import { avaliarConquistas } from './conquistasService.js';
 
 function reportProgress(onProgress, progress, stage) {
   if (typeof onProgress !== 'function') return;
@@ -39,23 +40,8 @@ function calcNivel(pontuacao) {
   return Math.max(1, Math.floor(pontuacao / 500) + 1);
 }
 
-const CONQUISTAS = [
-  { codigo: 'PRIMEIRA_AUDITORIA', nome: 'Primeira Auditoria', cond: (c) => c.totalAuditorias >= 1 },
-  { codigo: 'CEM_LIDOS', nome: '100 Itens Lidos', cond: (c) => c.totalItensLidos >= 100 },
-  { codigo: 'MIL_LIDOS', nome: '1.000 Itens Lidos', cond: (c) => c.totalItensLidos >= 1000 },
-  { codigo: 'DEZ_MIL_LIDOS', nome: '10.000 Itens Lidos', cond: (c) => c.totalItensLidos >= 10000 },
-  { codigo: 'CONFORMIDADE_95', nome: 'Mestre da Conformidade', cond: (c) => c.totalItensLidos >= 200 && c.totalItensConformes / Math.max(1, c.totalItensLidos) >= 0.95 },
-  { codigo: 'NIVEL_5', nome: 'Auditor Veterano', cond: (c) => c.nivel >= 5 },
-];
-
-function aplicarConquistas(colab) {
-  const atuais = new Set((colab.conquistas || []).map((c) => c.codigo));
-  for (const c of CONQUISTAS) {
-    if (!atuais.has(c.codigo) && c.cond(colab)) {
-      colab.conquistas.push({ codigo: c.codigo, nome: c.nome, conquistadaEm: new Date() });
-    }
-  }
-}
+// Conquistas agora vivem no model Conquista (CRUD via /api/conquistas) e
+// são avaliadas dinamicamente por avaliarConquistas() do conquistasService.
 
 /**
  * Processa um upload completo: cria/atualiza Auditoria, AuditItem em massa,
@@ -315,7 +301,8 @@ export async function processarPlanilha({ buffer, filename, lojaId, usuarioId, t
     colab.totalItensConformes += c.conformes;
     colab.pontuacao = Number((colab.pontuacao + c.pontuacao).toFixed(2));
     colab.nivel = calcNivel(colab.pontuacao);
-    aplicarConquistas(colab);
+    await avaliarConquistas(colab);
+    colab.nivel = calcNivel(colab.pontuacao);
     await colab.save();
     if ((index + 1) % passoAcumulados === 0 || index === colaboradoresAcumulados.length - 1) {
       reportProgress(onProgress, 90 + ((index + 1) / Math.max(1, colaboradoresAcumulados.length)) * 8, 'Atualizando colaboradores');

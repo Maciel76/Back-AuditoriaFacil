@@ -13,6 +13,7 @@ import { AuditItem } from "../models/AuditItem.js";
 import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { ROLES } from "../models/Usuario.js";
+import { resolverConquistasPortal } from "../services/conquistasService.js";
 import mongoose from "mongoose";
 
 const router = Router();
@@ -271,6 +272,7 @@ async function montarPerfilColaborador({
   colaboradorId,
   escopoLojaId,
   periodo,
+  tipo,
   dataInicio,
   dataFim,
 }) {
@@ -283,6 +285,8 @@ async function montarPerfilColaborador({
   const matchColabBase = { colaborador: colab._id };
   if (escopoLojaId)
     matchColabBase.loja = new mongoose.Types.ObjectId(escopoLojaId);
+  if (tipo && Object.values(TIPOS_AUDITORIA).includes(tipo))
+    matchColabBase.tipo = tipo;
 
   const { inicio, fim } = await intervaloPeriodo(periodo, {
     dataInicio,
@@ -535,7 +539,61 @@ router.get(
     });
     if (!dados)
       return res.status(404).json({ error: "Colaborador não encontrado" });
-    res.json(dados);
+
+    const colabId = new mongoose.Types.ObjectId(req.colaborador._id);
+    const matchCorredores = { colaborador: colabId };
+    if (req.query.tipo && Object.values(TIPOS_AUDITORIA).includes(req.query.tipo))
+      matchCorredores.tipo = req.query.tipo;
+    matchCorredores.data = {
+      $gte: dados.periodo.inicio,
+      $lte: dados.periodo.fim,
+    };
+
+    const corredoresAgg = await AuditItem.aggregate([
+      { $match: matchCorredores },
+      {
+        $group: {
+          _id: { local: { $ifNull: ["$local", "Sem corredor"] }, tipo: "$tipo" },
+          totalLidos: { $sum: 1 },
+          totalConformes: { $sum: { $cond: [{ $eq: ["$conforme", true] }, 1, 0] } },
+          ultimaData: { $max: "$data" },
+        },
+      },
+      { $sort: { totalLidos: -1 } },
+      { $limit: 60 },
+    ]);
+
+    const corredoresMap = new Map();
+    for (const r of corredoresAgg) {
+      const local = r._id.local || "Sem corredor";
+      const atual = corredoresMap.get(local) || {
+        local,
+        totalLidos: 0,
+        totalConformes: 0,
+        ultimaData: null,
+        porTipo: {},
+      };
+      atual.totalLidos += r.totalLidos;
+      atual.totalConformes += r.totalConformes;
+      atual.porTipo[r._id.tipo] = (atual.porTipo[r._id.tipo] || 0) + r.totalLidos;
+      if (!atual.ultimaData || r.ultimaData > atual.ultimaData)
+        atual.ultimaData = r.ultimaData;
+      corredoresMap.set(local, atual);
+    }
+    const corredores = [...corredoresMap.values()]
+      .map((c) => ({
+        ...c,
+        taxaConformidade:
+          c.totalLidos > 0
+            ? Number(((c.totalConformes / c.totalLidos) * 100).toFixed(1))
+            : 0,
+      }))
+      .sort((a, b) => b.totalLidos - a.totalLidos);
+
+    const colabFull = await Colaborador.findById(req.colaborador._id).lean();
+    const conquistas = await resolverConquistasPortal(colabFull || {});
+
+    res.json({ ...dados, corredores, conquistas });
   }),
 );
 
