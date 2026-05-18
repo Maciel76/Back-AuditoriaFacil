@@ -12,6 +12,7 @@ import { Auditoria, TIPOS_AUDITORIA } from "../models/Auditoria.js";
 import { AuditItem } from "../models/AuditItem.js";
 import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
+import { ROLES } from "../models/Usuario.js";
 import mongoose from "mongoose";
 
 const router = Router();
@@ -178,6 +179,7 @@ async function montarRelatorioDimensao({
       $group: {
         _id: {
           nomeDimensao: expressaoDimensao,
+          colaborador: "$colaborador",
           colaboradorNome: {
             $cond: [
               {
@@ -215,11 +217,20 @@ async function montarRelatorioDimensao({
     },
     { $match: { totalLidos: { $gt: 0 } } },
     {
+      $lookup: {
+        from: "colaboradors",
+        localField: "_id.colaborador",
+        foreignField: "_id",
+        as: "colaborador",
+      },
+    },
+    {
       $project: {
         _id: 0,
         nomeDimensao: "$_id.nomeDimensao",
         nome: "$_id.colaboradorNome",
         codigoExterno: "$_id.colaboradorCodigo",
+        avatarUrl: { $ifNull: [{ $arrayElemAt: ["$colaborador.avatarUrl", 0] }, ""] },
         totalItens: 1,
         totalLidos: 1,
         conformes: 1,
@@ -236,6 +247,7 @@ async function montarRelatorioDimensao({
     mapaColaboradores.get(chave).push({
       nome: linha.nome,
       codigoExterno: linha.codigoExterno,
+      avatarUrl: linha.avatarUrl,
       totalItens: linha.totalItens,
       totalLidos: linha.totalLidos,
       conformes: linha.conformes,
@@ -950,9 +962,10 @@ router.get(
       },
     ]);
 
-    // se não for super admin, retorna apenas a própria loja
+    // SUPER_ADMIN e STORE_ADMIN enxergam ranking geral de lojas.
+    // Perfis fora do escopo administrativo continuam restritos à própria loja.
     let items = ranking;
-    if (req.usuario.role !== "SUPER_ADMIN" && req.usuario.loja) {
+    if (![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role) && req.usuario.loja) {
       items = ranking.filter((r) => String(r._id) === String(req.usuario.loja));
     }
     res.json({ periodo: { inicio, fim }, items });

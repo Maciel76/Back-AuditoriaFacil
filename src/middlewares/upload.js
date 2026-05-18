@@ -27,6 +27,16 @@ const avatarDir = path.resolve(
 );
 if (!fs.existsSync(avatarDir)) fs.mkdirSync(avatarDir, { recursive: true });
 
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+]);
+const AVATAR_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"]);
+
 export const uploadAvatar = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, avatarDir),
@@ -35,9 +45,14 @@ export const uploadAvatar = multer({
       cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: AVATAR_MAX_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) return cb(null, true);
-    cb(new Error("Apenas imagens são aceitas"));
+    const mimeType = (file.mimetype || "").toLowerCase();
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mimeValido = AVATAR_MIME_TYPES.has(mimeType);
+    const extensaoValida = AVATAR_EXTENSIONS.has(ext);
+
+    if (mimeValido && extensaoValida) return cb(null, true);
+    cb(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 5 MB são aceitas"));
   },
 });

@@ -90,11 +90,24 @@ router.post(
       throw httpError(403, "Você só pode alterar sua própria foto");
     }
 
-    if (
-      req.usuario?.role === ROLES.COLABORADOR &&
-      String(req.usuario.colaborador || "") !== String(colab._id)
-    ) {
-      throw httpError(403, "Você só pode alterar sua própria foto");
+    if (req.usuario) {
+      if (req.usuario.role === ROLES.COLABORADOR) {
+        if (String(req.usuario.colaborador || "") !== String(colab._id)) {
+          throw httpError(403, "Você só pode alterar sua própria foto");
+        }
+      } else if (![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role)) {
+        throw httpError(403, "Sem permissão para alterar esta foto");
+      } else if (
+        req.usuario.role === ROLES.STORE_ADMIN &&
+        String(req.usuario.loja || "") !== String(colab.loja || "")
+      ) {
+        throw httpError(403, "Colaborador fora do escopo da sua loja");
+      } else if (req.usuario.role === ROLES.SUPER_ADMIN) {
+        const lojaEscopo = req.query.lojaId || req.body?.lojaId;
+        if (lojaEscopo && String(lojaEscopo) !== String(colab.loja || "")) {
+          throw httpError(403, "Colaborador fora do escopo informado");
+        }
+      }
     }
 
     if (colab.avatarUrl) {
@@ -117,10 +130,10 @@ router.use(autenticar);
 router.get(
   "/",
   escopoLoja,
-  exigirEscopoLoja,
   asyncHandler(async (req, res) => {
     const { q, page = 1, limit = 50 } = req.query;
-    const filtro = { loja: req.escopoLojaId };
+    const filtro = {};
+    if (req.escopoLojaId) filtro.loja = req.escopoLojaId;
     if (q)
       filtro.$or = [
         { nome: new RegExp(q, "i") },
@@ -129,6 +142,7 @@ router.get(
     const skip = (Number(page) - 1) * Number(limit);
     const [items, total] = await Promise.all([
       Colaborador.find(filtro)
+        .populate("loja", "nome codigo")
         .sort({ pontuacao: -1, nome: 1 })
         .skip(skip)
         .limit(Number(limit))

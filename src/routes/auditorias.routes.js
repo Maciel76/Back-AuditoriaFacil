@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { Auditoria, TIPOS_AUDITORIA } from '../models/Auditoria.js';
 import { AuditItem } from '../models/AuditItem.js';
+import { Colaborador } from '../models/Colaborador.js';
 import { upload } from '../middlewares/upload.js';
 import { autenticar, escopoLoja, exigirEscopoLoja, exigirRole } from '../middlewares/auth.js';
 import { ROLES } from '../models/Usuario.js';
@@ -141,6 +142,28 @@ router.get(
   asyncHandler(async (req, res) => {
     const auditoria = await Auditoria.findOne({ _id: req.params.id, loja: req.escopoLojaId }).lean();
     if (!auditoria) throw httpError(404, 'Auditoria não encontrada');
+
+    if (auditoria.topColaboradores?.length) {
+      const colaboradorIds = auditoria.topColaboradores
+        .map((item) => item.colaborador)
+        .filter(Boolean);
+
+      if (colaboradorIds.length) {
+        const colaboradores = await Colaborador.find({ _id: { $in: colaboradorIds } })
+          .select('_id avatarUrl')
+          .lean();
+
+        const avatarPorColaborador = new Map(
+          colaboradores.map((colaborador) => [String(colaborador._id), colaborador.avatarUrl || '']),
+        );
+
+        auditoria.topColaboradores = auditoria.topColaboradores.map((item) => ({
+          ...item,
+          avatarUrl: avatarPorColaborador.get(String(item.colaborador || '')) || '',
+        }));
+      }
+    }
+
     res.json(auditoria);
   })
 );
