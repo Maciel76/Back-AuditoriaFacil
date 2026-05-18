@@ -661,30 +661,114 @@ router.get(
       { $sort: { "_id.dia": 1 } },
     ]);
 
-    const colaboradoresAtivos = await Colaborador.countDocuments(
-      req.escopoLojaId
-        ? { loja: req.escopoLojaId, ativo: true }
-        : { ativo: true },
-    );
     const filtroAuditorias = req.escopoLojaId ? { loja: req.escopoLojaId } : {};
     if (req.query.tipo) filtroAuditorias.tipo = req.query.tipo;
-    const ultimasAuditorias = await Auditoria.find(filtroAuditorias)
-      .sort({ data: -1, createdAt: -1 })
-      .limit(5)
-      .lean();
+    const matchAuditoriasResumo = {
+      data: { $gte: inicio, $lte: fim },
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+      ...(req.query.tipo ? { tipo: req.query.tipo } : {}),
+    };
+    const matchAuditoriasRuptura = {
+      data: { $gte: inicio, $lte: fim },
+      tipo: TIPOS_AUDITORIA.RUPTURA,
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+    };
+    const matchProdutosNaoAuditados = {
+      data: { $gte: inicio, $lte: fim },
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+      ...(req.query.tipo === TIPOS_AUDITORIA.ETIQUETA
+        ? {
+            tipo: TIPOS_AUDITORIA.ETIQUETA,
+            situacao: 'Não lidos com estoque',
+          }
+        : req.query.tipo === TIPOS_AUDITORIA.PRESENCA || req.query.tipo === TIPOS_AUDITORIA.RUPTURA
+          ? {
+              tipo: req.query.tipo,
+              situacao: 'Sem Presença e Com Estoque',
+            }
+          : {
+              $or: [
+                { tipo: TIPOS_AUDITORIA.ETIQUETA, situacao: 'Não lidos com estoque' },
+                { tipo: TIPOS_AUDITORIA.PRESENCA, situacao: 'Sem Presença e Com Estoque' },
+                { tipo: TIPOS_AUDITORIA.RUPTURA, situacao: 'Sem Presença e Com Estoque' },
+              ],
+            }),
+    };
+    const matchColaboradoresDistintos = {
+      data: { $gte: inicio, $lte: fim },
+      colaborador: { $ne: null },
+      totalLidos: { $gt: 0 },
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+    };
 
-    // Contagens específicas de ETIQUETA no período
+    // Contagens específicas de ETIQUETA no período (mantidas por compatibilidade)
     const matchEtiquetaBase = { tipo: 'ETIQUETA', data: { $gte: inicio, $lte: fim } };
     if (req.escopoLojaId) matchEtiquetaBase.loja = new mongoose.Types.ObjectId(req.escopoLojaId);
-    const [totalDesatualizados, totalNaoLidos] = await Promise.all([
+    const [
+      resumoAuditorias,
+      produtosNaoAuditados,
+      resumoRuptura,
+      colaboradoresDistintos,
+      colaboradoresAtivos,
+      ultimasAuditorias,
+      totalDesatualizados,
+      totalNaoLidos,
+    ] = await Promise.all([
+      Auditoria.aggregate([
+        { $match: matchAuditoriasResumo },
+        {
+          $group: {
+            _id: null,
+            produtosAuditados: { $sum: { $ifNull: ['$totalLidos', 0] } },
+            mediaConclusao: { $avg: { $ifNull: ['$taxaConformidade', 0] } },
+          },
+        },
+      ]),
+      AuditItem.countDocuments(matchProdutosNaoAuditados),
+      Auditoria.aggregate([
+        { $match: matchAuditoriasRuptura },
+        {
+          $group: {
+            _id: null,
+            custoRuptura: { $sum: { $ifNull: ['$custoRupturaTotal', 0] } },
+          },
+        },
+      ]),
+      MetricaDiaria.distinct('colaborador', matchColaboradoresDistintos),
+      Colaborador.countDocuments(
+        req.escopoLojaId
+          ? { loja: req.escopoLojaId, ativo: true }
+          : { ativo: true },
+      ),
+      Auditoria.find(filtroAuditorias)
+        .sort({ data: -1, createdAt: -1 })
+        .limit(5)
+        .lean(),
       AuditItem.countDocuments({ ...matchEtiquetaBase, situacao: 'Desatualizado' }),
       AuditItem.countDocuments({ ...matchEtiquetaBase, situacao: 'Não lidos com estoque' }),
     ]);
+
+    const cardsResumo = {
+      produtosAuditados: Number(resumoAuditorias[0]?.produtosAuditados || 0),
+      mediaConclusao: Number((resumoAuditorias[0]?.mediaConclusao || 0).toFixed(2)),
+      produtosNaoAuditados: Number(produtosNaoAuditados || 0),
+      custoRupturaRuptura: Number((resumoRuptura[0]?.custoRuptura || 0).toFixed(2)),
+      totalColaboradores: colaboradoresDistintos.length,
+    };
 
     res.json({
       periodo: { inicio, fim, label: req.query.periodo || "1d" },
       totaisPorTipo,
       totalGeral,
+      cardsResumo,
       serie,
       colaboradoresAtivos,
       totalDesatualizados,
