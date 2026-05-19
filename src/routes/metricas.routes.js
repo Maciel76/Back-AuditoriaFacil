@@ -18,6 +18,34 @@ import mongoose from "mongoose";
 
 const router = Router();
 const FILTRO_ITENS_ATIVOS = { cancelada: { $ne: true } };
+const SITUACOES_DASHBOARD_PRESENCA = Object.freeze({
+  lidos: "Com Presença e com Estoque",
+  naoLidos: "Sem Presença e Com Estoque",
+});
+
+function somarSituacaoMapa(situacao) {
+  return {
+    $sum: {
+      $ifNull: [{ $getField: { field: situacao, input: "$situacoes" } }, 0],
+    },
+  };
+}
+
+function resumirPresencaDashboard(row) {
+  const itensLidos = Number(row?.presencaComEstoque || 0);
+  const itensNaoLidos = Number(row?.semPresencaComEstoque || 0);
+  const totalItens = itensLidos + itensNaoLidos;
+
+  return {
+    totalItens,
+    itensLidos,
+    itensNaoLidos,
+    taxaConformidade:
+      totalItens > 0
+        ? Number(((itensLidos / totalItens) * 100).toFixed(2))
+        : 0,
+  };
+}
 
 /**
  * Calcula intervalo de datas a partir do nome do período.
@@ -684,6 +712,12 @@ router.get(
           totalNaoConformes: { $sum: "$totalNaoConformes" },
           pontuacao: { $sum: "$pontuacao" },
           custoRuptura: { $sum: "$custoRuptura" },
+          presencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.lidos,
+          ),
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
           dias: { $sum: 1 },
         },
       },
@@ -706,15 +740,25 @@ router.get(
           ? Number(((row.totalConformes / row.totalLidos) * 100).toFixed(2))
           : 0;
       };
+      const resumoPresenca =
+        t === TIPOS_AUDITORIA.PRESENCA ? resumirPresencaDashboard(r) : null;
       totaisPorTipo[t] = r
         ? {
-            totalItensAuditaveis: r.totalItensAuditaveis,
-            totalLidos: r.totalLidos,
-            totalConformes: r.totalConformes,
-            totalNaoConformes: r.totalNaoConformes,
+            totalItensAuditaveis: resumoPresenca
+              ? resumoPresenca.totalItens
+              : r.totalItensAuditaveis,
+            totalLidos: resumoPresenca ? resumoPresenca.totalItens : r.totalLidos,
+            totalConformes: resumoPresenca
+              ? resumoPresenca.itensLidos
+              : r.totalConformes,
+            totalNaoConformes: resumoPresenca
+              ? resumoPresenca.itensNaoLidos
+              : r.totalNaoConformes,
             pontuacao: Number(r.pontuacao.toFixed(2)),
             custoRuptura: Number(r.custoRuptura.toFixed(2)),
-            taxaConformidade: calcTaxa(t, r),
+            taxaConformidade: resumoPresenca
+              ? resumoPresenca.taxaConformidade
+              : calcTaxa(t, r),
             dias: r.dias,
           }
         : {
@@ -771,7 +815,7 @@ router.get(
     }
 
     // série temporal por dia
-    const serie = await MetricaDiaria.aggregate([
+    const serieBruta = await MetricaDiaria.aggregate([
       { $match: match },
       {
         $group: {
@@ -781,12 +825,29 @@ router.get(
           },
           totalLidos: { $sum: "$totalLidos" },
           totalConformes: { $sum: "$totalConformes" },
+          presencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.lidos,
+          ),
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
           taxaConformidade: { $avg: "$taxaConformidade" },
           pontuacao: { $sum: "$pontuacao" },
         },
       },
       { $sort: { "_id.dia": 1 } },
     ]);
+
+    const serie = serieBruta.map((linha) => {
+      if (linha._id.tipo !== TIPOS_AUDITORIA.PRESENCA) return linha;
+      const resumoPresenca = resumirPresencaDashboard(linha);
+      return {
+        ...linha,
+        totalLidos: resumoPresenca.totalItens,
+        totalConformes: resumoPresenca.itensLidos,
+        taxaConformidade: resumoPresenca.taxaConformidade,
+      };
+    });
 
     const filtroAuditorias = req.escopoLojaId ? { loja: req.escopoLojaId } : {};
     if (req.query.tipo) filtroAuditorias.tipo = req.query.tipo;
@@ -907,11 +968,24 @@ router.get(
       }),
     ]);
 
+    const resumoCardsPresenca =
+      req.query.tipo === TIPOS_AUDITORIA.PRESENCA
+        ? totaisPorTipo[TIPOS_AUDITORIA.PRESENCA]
+        : null;
+    const produtosAuditadosResumo = Number(
+      resumoCardsPresenca?.totalLidos || resumoAuditorias[0]?.produtosAuditados || 0,
+    );
+    const mediaConclusaoResumo = Number(
+      (
+        resumoCardsPresenca?.taxaConformidade ||
+        resumoAuditorias[0]?.mediaConclusao ||
+        0
+      ).toFixed(2),
+    );
+
     const cardsResumo = {
-      produtosAuditados: Number(resumoAuditorias[0]?.produtosAuditados || 0),
-      mediaConclusao: Number(
-        (resumoAuditorias[0]?.mediaConclusao || 0).toFixed(2),
-      ),
+      produtosAuditados: produtosAuditadosResumo,
+      mediaConclusao: mediaConclusaoResumo,
       produtosNaoAuditados: Number(produtosNaoAuditados || 0),
       custoRupturaRuptura: Number(
         (resumoRuptura[0]?.custoRuptura || 0).toFixed(2),
