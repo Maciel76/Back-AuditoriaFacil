@@ -5,7 +5,7 @@ const HistoricoDesbloqueioSchema = new mongoose.Schema(
   {
     nivel: {
       type: String,
-      enum: ["comum", "raro", "epico", "lendario", "mitico"],
+      enum: ["comum", "raro", "epico", "lendario", "diamante", "mitico"],
       required: true,
     },
     desbloqueadoEm: { type: Date, required: true },
@@ -74,7 +74,15 @@ const ColaboradorSchema = new mongoose.Schema(
         codigo: { type: String, required: true },
         tierAtual: {
           type: String,
-          enum: ["comum", "raro", "epico", "lendario", "mitico", null],
+          enum: [
+            "comum",
+            "raro",
+            "epico",
+            "lendario",
+            "diamante",
+            "mitico",
+            null,
+          ],
           default: null,
         },
         tiersDesbloqueados: { type: [String], default: [] },

@@ -1558,6 +1558,23 @@ router.get(
   }),
 );
 
+router.get(
+  "/portal/me/ranking-loja",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const escopoLojaId =
+      req.escopoLojaId || req.colaborador.loja?.toString() || null;
+    const { inicio, fim, items } = await executarRankingColaboradores({
+      escopoLojaId,
+      periodo: req.query.periodo,
+      tipo: req.query.tipo,
+      dataInicio: req.query.dataInicio,
+      dataFim: req.query.dataFim,
+    });
+    res.json({ periodo: { inicio, fim }, items });
+  }),
+);
+
 router.use(autenticar);
 
 // ============ DASHBOARD: KPIs gerais ============
@@ -1908,29 +1925,30 @@ router.get(
 );
 
 // ============ RANKING DE COLABORADORES (escopo loja) ============
-router.get(
-  "/ranking/colaboradores",
-  escopoLoja,
-  asyncHandler(async (req, res) => {
-    const periodo = req.query.periodo || "1d";
-    const tipoFilter = req.query.tipo;
-    const matchBase = { colaborador: { $ne: null } };
-    if (req.escopoLojaId)
-      matchBase.loja = new mongoose.Types.ObjectId(req.escopoLojaId);
-    if (tipoFilter) matchBase.tipo = tipoFilter;
+async function executarRankingColaboradores({
+  escopoLojaId,
+  periodo = "1d",
+  tipo,
+  dataInicio,
+  dataFim,
+}) {
+  const matchBase = { colaborador: { $ne: null } };
+  if (escopoLojaId)
+    matchBase.loja = new mongoose.Types.ObjectId(escopoLojaId);
+  if (tipo) matchBase.tipo = tipo;
 
-    const { inicio, fim } = await intervaloPeriodo(periodo, {
-      dataInicio: req.query.dataInicio,
-      dataFim: req.query.dataFim,
-      match: matchBase,
-    });
-    const match = {
-      ...matchBase,
-      cancelada: { $ne: true },
-      data: { $gte: inicio, $lte: fim },
-    };
+  const { inicio, fim } = await intervaloPeriodo(periodo, {
+    dataInicio,
+    dataFim,
+    match: matchBase,
+  });
+  const match = {
+    ...matchBase,
+    cancelada: { $ne: true },
+    data: { $gte: inicio, $lte: fim },
+  };
 
-    const ranking = await MetricaDiaria.aggregate([
+  const ranking = await MetricaDiaria.aggregate([
       { $match: match },
       {
         $group: {
@@ -2052,7 +2070,21 @@ router.get(
       },
     ]);
 
-    res.json({ periodo: { inicio, fim }, items: ranking });
+    return { inicio, fim, items: ranking };
+}
+
+router.get(
+  "/ranking/colaboradores",
+  escopoLoja,
+  asyncHandler(async (req, res) => {
+    const { inicio, fim, items } = await executarRankingColaboradores({
+      escopoLojaId: req.escopoLojaId,
+      periodo: req.query.periodo,
+      tipo: req.query.tipo,
+      dataInicio: req.query.dataInicio,
+      dataFim: req.query.dataFim,
+    });
+    res.json({ periodo: { inicio, fim }, items });
   }),
 );
 

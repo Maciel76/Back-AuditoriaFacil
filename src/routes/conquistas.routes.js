@@ -11,6 +11,7 @@ import {
 import { Colaborador } from "../models/Colaborador.js";
 import { autenticar, exigirRole } from "../middlewares/auth.js";
 import { autenticarColaborador } from "../middlewares/authColaborador.js";
+import { uploadConquistaImagem } from "../middlewares/upload.js";
 import { ROLES } from "../models/Usuario.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { verificarToken } from "../utils/jwt.js";
@@ -82,11 +83,23 @@ router.get(
 router.use(autenticar);
 router.use(exigirRole(ROLES.SUPER_ADMIN));
 
+// Upload de imagem de tier (multipart/form-data)
+router.post(
+  "/upload-imagem",
+  uploadConquistaImagem.single("imagem"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) throw httpError(400, "Arquivo de imagem ausente");
+    const url = `/uploads/conquistas/${req.file.filename}`;
+    res.json({ url, filename: req.file.filename, size: req.file.size });
+  }),
+);
+
 const tierSchema = z.object({
   nivel: z.enum(TIERS),
   meta: z.number().nonnegative(),
   xpBonus: z.number().nonnegative().optional().default(0),
   titulo: z.string().optional().default(""),
+  imagemUrl: z.string().trim().max(500).optional().default(""),
 });
 
 const baseSchema = z.object({

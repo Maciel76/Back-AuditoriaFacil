@@ -10,14 +10,22 @@ import { TIPOS_AUDITORIA } from "./Auditoria.js";
  * conquistas não-recorrentes representam marcos únicos.
  */
 
-export const TIERS = ["comum", "raro", "epico", "lendario", "mitico"];
+export const TIERS = [
+  "comum",
+  "raro",
+  "epico",
+  "lendario",
+  "diamante",
+  "mitico",
+];
 
 export const TIER_INFO = {
   comum: { ordem: 1, label: "Comum", cor: "#94a3b8" },
   raro: { ordem: 2, label: "Raro", cor: "#3b82f6" },
   epico: { ordem: 3, label: "Épico", cor: "#a855f7" },
   lendario: { ordem: 4, label: "Lendário", cor: "#f59e0b" },
-  mitico: { ordem: 5, label: "Mítico", cor: "#ef4444" },
+  diamante: { ordem: 5, label: "Diamante", cor: "#06b6d4" },
+  mitico: { ordem: 6, label: "Mítico", cor: "#ef4444" },
 };
 
 export const METRICAS_SUPORTADAS = [
@@ -47,6 +55,7 @@ const TierSchema = new mongoose.Schema(
     meta: { type: Number, required: true },
     xpBonus: { type: Number, default: 0 },
     titulo: { type: String, default: "" },
+    imagemUrl: { type: String, default: "" },
   },
   { _id: false },
 );

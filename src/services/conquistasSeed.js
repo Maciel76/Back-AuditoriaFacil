@@ -1,5 +1,82 @@
 import { Conquista } from "../models/Conquista.js";
 
+function clonarTier(tier) {
+  return {
+    nivel: tier.nivel,
+    meta: Number(tier.meta || 0),
+    xpBonus: Number(tier.xpBonus || 0),
+    titulo: tier.titulo || "",
+  };
+}
+
+function interpolarNumero(valorA, valorB, fallback = 0) {
+  const a = Number(valorA);
+  const b = Number(valorB);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return Number(fallback || 0);
+  }
+  if (a === b) return Math.round(a);
+  return Math.round((a + b) / 2);
+}
+
+function criarTierDiamante(tiers, fallback = {}) {
+  const lendario = (tiers || []).find((tier) => tier.nivel === "lendario");
+  const mitico = (tiers || []).find((tier) => tier.nivel === "mitico");
+
+  if (!lendario || !mitico) {
+    return clonarTier({ nivel: "diamante", ...fallback });
+  }
+
+  return {
+    nivel: "diamante",
+    meta: interpolarNumero(lendario.meta, mitico.meta, fallback.meta),
+    xpBonus: interpolarNumero(
+      lendario.xpBonus || 0,
+      mitico.xpBonus || 0,
+      fallback.xpBonus,
+    ),
+    titulo: fallback.titulo || "",
+  };
+}
+
+function comTierDiamante(tiers, fallback = {}) {
+  const base = (tiers || []).map(clonarTier);
+  if (base.some((tier) => tier.nivel === "diamante")) return base;
+
+  const diamante = criarTierDiamante(base, fallback);
+  const indiceMitico = base.findIndex((tier) => tier.nivel === "mitico");
+
+  if (indiceMitico === -1) {
+    return [...base, diamante].sort((a, b) => a.meta - b.meta);
+  }
+
+  base.splice(indiceMitico, 0, diamante);
+  return base;
+}
+
+function mesclarTiersPadrao(tiersAtuais, tiersPadrao) {
+  const base = (tiersAtuais || []).map(clonarTier);
+  const niveisAtuais = new Set(base.map((tier) => tier.nivel));
+  let mudou = false;
+
+  for (const tierPadrao of tiersPadrao || []) {
+    if (niveisAtuais.has(tierPadrao.nivel)) continue;
+
+    base.push(
+      tierPadrao.nivel === "diamante"
+        ? criarTierDiamante(base, tierPadrao)
+        : clonarTier(tierPadrao),
+    );
+    niveisAtuais.add(tierPadrao.nivel);
+    mudou = true;
+  }
+
+  return {
+    tiers: base.sort((a, b) => a.meta - b.meta),
+    mudou,
+  };
+}
+
 /**
  * Conquistas padrão do sistema. São criadas no bootstrap se a coleção
  * estiver vazia. Após o primeiro arranque o SUPER_ADMIN gerencia tudo
@@ -305,6 +382,21 @@ export const CONQUISTAS_PADRAO = [
   },
 ];
 
+for (const conquista of CONQUISTAS_PADRAO) {
+  if (conquista.codigo === "NIVEL") {
+    const tierLendario = conquista.tiers.find(
+      (tier) => tier.nivel === "lendario",
+    );
+    if (tierLendario?.titulo === "Diamante") {
+      tierLendario.titulo = "Platina";
+    }
+  }
+
+  conquista.tiers = comTierDiamante(conquista.tiers, {
+    titulo: conquista.codigo === "NIVEL" ? "Diamante" : "",
+  });
+}
+
 export async function semearConquistasSeNecessario() {
   const total = await Conquista.countDocuments();
   if (total > 0) return { criadas: 0, ignoradas: total };
@@ -316,24 +408,57 @@ export async function semearConquistasSeNecessario() {
 }
 
 export async function sincronizarConquistasPadrao() {
-  const existentes = await Conquista.find({}, { codigo: 1 }).lean();
-  const codigosExistentes = new Set(existentes.map((item) => item.codigo));
-  const faltantes = CONQUISTAS_PADRAO.filter(
-    (item) => !codigosExistentes.has(item.codigo),
+  const existentes = await Conquista.find({}, { codigo: 1, tiers: 1 }).lean();
+  const mapaExistentes = new Map(
+    existentes.map((item) => [item.codigo, item]),
   );
+  const faltantes = [];
+  const atualizacoes = [];
 
-  if (!faltantes.length) {
+  for (const padrao of CONQUISTAS_PADRAO) {
+    const existente = mapaExistentes.get(padrao.codigo);
+    if (!existente) {
+      faltantes.push(padrao);
+      continue;
+    }
+
+    const { tiers, mudou } = mesclarTiersPadrao(existente.tiers, padrao.tiers);
+    if (!mudou) continue;
+
+    atualizacoes.push({ codigo: padrao.codigo, tiers });
+  }
+
+  if (!faltantes.length && !atualizacoes.length) {
     return {
       criadas: 0,
+      atualizadas: 0,
       ignoradas: CONQUISTAS_PADRAO.length,
       codigosCriados: [],
+      codigosAtualizados: [],
     };
   }
 
-  await Conquista.insertMany(faltantes);
+  if (faltantes.length) {
+    await Conquista.insertMany(faltantes);
+  }
+
+  if (atualizacoes.length) {
+    await Promise.all(
+      atualizacoes.map((item) =>
+        Conquista.updateOne(
+          { codigo: item.codigo },
+          { $set: { tiers: item.tiers } },
+        ),
+      ),
+    );
+  }
+
   return {
     criadas: faltantes.length,
-    ignoradas: CONQUISTAS_PADRAO.length - faltantes.length,
+    atualizadas: atualizacoes.length,
+    ignoradas:
+      CONQUISTAS_PADRAO.length - faltantes.length - atualizacoes.length,
     codigosCriados: faltantes.map((item) => item.codigo),
+    codigosAtualizados: atualizacoes.map((item) => item.codigo),
   };
 }

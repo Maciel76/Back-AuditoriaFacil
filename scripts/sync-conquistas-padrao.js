@@ -8,16 +8,27 @@ async function main() {
   await connectDB();
   const resultado = await sincronizarConquistasPadrao();
 
-  if (!resultado.criadas) {
+  if (!resultado.criadas && !resultado.atualizadas) {
     console.log(
-      "[sync-conquistas] nenhuma conquista padrão nova precisava ser criada",
+      "[sync-conquistas] nenhuma conquista padrão precisava ser criada ou atualizada",
     );
     return;
   }
 
-  console.log(
-    `[sync-conquistas] ${resultado.criadas} conquista(s) criada(s): ${resultado.codigosCriados.join(", ")}`,
-  );
+  if (resultado.criadas) {
+    console.log(
+      `[sync-conquistas] ${resultado.criadas} conquista(s) criada(s): ${resultado.codigosCriados.join(", ")}`,
+    );
+  }
+
+  if (resultado.atualizadas) {
+    console.log(
+      `[sync-conquistas] ${resultado.atualizadas} conquista(s) atualizada(s): ${resultado.codigosAtualizados.join(", ")}`,
+    );
+    console.log(
+      "[sync-conquistas] rode node --env-file=.env scripts/recompute-acumulados.js para reavaliar as conquistas ja persistidas dos colaboradores.",
+    );
+  }
 }
 
 main()

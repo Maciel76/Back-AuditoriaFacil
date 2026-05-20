@@ -56,3 +56,40 @@ export const uploadAvatar = multer({
     cb(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 5 MB são aceitas"));
   },
 });
+
+// ============ Upload de imagens de conquistas (diskStorage) ============
+const conquistaDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "uploads",
+  "conquistas",
+);
+if (!fs.existsSync(conquistaDir)) fs.mkdirSync(conquistaDir, { recursive: true });
+
+const CONQUISTA_MAX_BYTES = 3 * 1024 * 1024;
+
+export const uploadConquistaImagem = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, conquistaDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".png";
+      const codigo = String(req.body?.codigo || "conq")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .slice(0, 40);
+      const nivel = String(req.body?.nivel || "tier")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .slice(0, 20);
+      cb(null, `${codigo}-${nivel}-${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: CONQUISTA_MAX_BYTES, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const mimeType = (file.mimetype || "").toLowerCase();
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    if (AVATAR_MIME_TYPES.has(mimeType) && AVATAR_EXTENSIONS.has(ext)) return cb(null, true);
+    cb(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 3 MB são aceitas"));
+  },
+});

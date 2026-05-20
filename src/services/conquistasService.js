@@ -185,20 +185,27 @@ export async function resolverConquistasPortal(colab) {
     const valor =
       estado?.progresso ??
       lerMetrica(colab, def.metricaBase, def.tipoAuditoria);
-    const tierAtualNivel = estado?.tierAtual || null;
-    const desbloqueados = new Set(estado?.tiersDesbloqueados || []);
-    const historicoBase = estado?.historicoDesbloqueios?.length
-      ? estado.historicoDesbloqueios
-      : tiersOrdenados
-          .filter((t) => desbloqueados.has(t.nivel))
-          .map((t) => ({
-            nivel: t.nivel,
-            desbloqueadoEm:
-              estado?.desbloqueadaEm || estado?.ultimaAtualizacao || null,
-            meta: t.meta,
-            xpBonus: t.xpBonus || 0,
-            titulo: t.titulo || "",
-          }));
+    const { alcancado, desbloqueados: desbloqueadosCalculados } = tierMaisAlto(
+      tiersOrdenados,
+      valor,
+    );
+    const tierAtualNivel = alcancado?.nivel || null;
+    const desbloqueados = new Set(desbloqueadosCalculados);
+    const historicoPorNivel = new Map(
+      (estado?.historicoDesbloqueios || []).map((item) => [item.nivel, item]),
+    );
+    const historicoBase = tiersOrdenados
+      .filter((tier) => desbloqueados.has(tier.nivel))
+      .map((tier) => {
+        const historico = historicoPorNivel.get(tier.nivel);
+        return {
+          nivel: tier.nivel,
+          desbloqueadoEm: historico?.desbloqueadoEm || null,
+          meta: historico?.meta ?? tier.meta,
+          xpBonus: historico?.xpBonus ?? tier.xpBonus ?? 0,
+          titulo: historico?.titulo || tier.titulo || "",
+        };
+      });
 
     const tierAtualDef = tierAtualNivel
       ? tiersOrdenados.find((t) => t.nivel === tierAtualNivel)
@@ -236,11 +243,13 @@ export async function resolverConquistasPortal(colab) {
         meta: t.meta,
         xpBonus: t.xpBonus || 0,
         titulo: t.titulo,
+        imagemUrl: t.imagemUrl || "",
         desbloqueado: desbloqueados.has(t.nivel),
       })),
       tierAtual: tierAtualNivel,
       tierAtualLabel: tierAtualNivel ? TIER_INFO[tierAtualNivel]?.label : null,
       tierAtualCor: tierAtualNivel ? TIER_INFO[tierAtualNivel]?.cor : null,
+      tierAtualImagem: tierAtualDef?.imagemUrl || "",
       proximoTier: proximoTierDef
         ? {
             nivel: proximoTierDef.nivel,
