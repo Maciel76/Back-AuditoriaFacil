@@ -19,7 +19,10 @@ import auditoriasRoutes from "./routes/auditorias.routes.js";
 import metricasRoutes from "./routes/metricas.routes.js";
 import conquistasRoutes from "./routes/conquistas.routes.js";
 import configRoutes from "./routes/config.routes.js";
-import { semearConquistasSeNecessario } from "./services/conquistasSeed.js";
+import {
+  semearConquistasSeNecessario,
+  sincronizarConquistasPadrao,
+} from "./services/conquistasSeed.js";
 
 async function bootstrap() {
   await connectDB();
@@ -39,6 +42,7 @@ async function bootstrap() {
   }
 
   await semearConquistasSeNecessario();
+  await sincronizarConquistasPadrao();
 
   const app = express();
   app.disable("x-powered-by");
