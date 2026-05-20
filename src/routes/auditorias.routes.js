@@ -150,8 +150,18 @@ router.get(
   escopoLoja,
   exigirEscopoLoja,
   asyncHandler(async (req, res) => {
-    const { tipo, dataInicio, dataFim, page = 1, limit = 30 } = req.query;
+    const {
+      tipo,
+      dataInicio,
+      dataFim,
+      page = 1,
+      limit = 30,
+      includeExcluidas,
+    } = req.query;
     const q = { loja: req.escopoLojaId };
+    if (String(includeExcluidas || "").toLowerCase() !== "true") {
+      q.excluida = { $ne: true };
+    }
     if (tipo) q.tipo = tipo;
     if (dataInicio || dataFim) {
       q.data = {};
@@ -177,7 +187,9 @@ router.post(
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN),
   asyncHandler(async (req, res) => {
-    const tipo = String(req.body?.tipo || "").toUpperCase().trim();
+    const tipo = String(req.body?.tipo || "")
+      .toUpperCase()
+      .trim();
     if (!Object.values(TIPOS_AUDITORIA).includes(tipo)) {
       throw httpError(400, "Tipo de auditoria inválido");
     }
@@ -301,7 +313,9 @@ router.patch(
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
-    const novoTipo = String(req.body?.tipo || "").toUpperCase().trim();
+    const novoTipo = String(req.body?.tipo || "")
+      .toUpperCase()
+      .trim();
     if (!Object.values(TIPOS_AUDITORIA).includes(novoTipo)) {
       throw httpError(400, "Tipo de auditoria inválido");
     }
@@ -336,9 +350,11 @@ router.delete(
       loja: req.escopoLojaId,
     });
     if (!auditoria) throw httpError(404, "Auditoria não encontrada");
-    await AuditItem.deleteMany({ auditoria: auditoria._id });
-    await auditoria.deleteOne();
-    res.json({ ok: true });
+    auditoria.excluida = true;
+    auditoria.excluidaEm = new Date();
+    auditoria.excluidaPor = req.usuario.id;
+    await auditoria.save();
+    res.json({ ok: true, mensagem: "Auditoria removida do histórico" });
   }),
 );
 

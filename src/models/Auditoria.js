@@ -55,6 +55,9 @@ const AuditoriaSchema = new mongoose.Schema(
     canceladaEm: Date,
     canceladaPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
     motivoCancelamento: { type: String, default: "" },
+    excluida: { type: Boolean, default: false },
+    excluidaEm: Date,
+    excluidaPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
   },
   { timestamps: true },
 );

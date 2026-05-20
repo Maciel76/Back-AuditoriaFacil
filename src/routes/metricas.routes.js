@@ -98,7 +98,8 @@ function resumirRupturaIntegradaDashboard(
     };
   }
 
-  const basePresenca = Number(presencaAnteriorRow?.presencaComEstoque || 0) +
+  const basePresenca =
+    Number(presencaAnteriorRow?.presencaComEstoque || 0) +
     Number(presencaAnteriorRow?.semPresencaComEstoque || 0);
   const itensRestantes = Number(rupturaRow?.semPresencaComEstoque || 0);
   const itensConcluidos = Math.max(basePresenca - itensRestantes, 0);
@@ -321,16 +322,12 @@ async function carregarMapaContinuidadeRupturaPorGrupo({
   const continuidadePorGrupo = new Map();
 
   for (const ruptura of rupturas) {
-    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
-      ruptura._id.dia,
-    );
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(ruptura._id.dia);
     if (!diaPresencaAnterior) continue;
 
     const resumo = resumirRupturaIntegradaDashboard(
       ruptura,
-      presencaPorGrupoDia.get(
-        `${ruptura._id.grupo}|${diaPresencaAnterior}`,
-      ),
+      presencaPorGrupoDia.get(`${ruptura._id.grupo}|${diaPresencaAnterior}`),
       ruptura._id.dia,
     );
 
@@ -405,7 +402,10 @@ function resumirLinhaSerieRupturaContinuada(linha, presencaReferenciaPorDia) {
   );
 }
 
-function aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia) {
+function aplicarContinuidadeRupturaNaLinhaSerie(
+  linha,
+  presencaReferenciaPorDia,
+) {
   const resumo = resumirLinhaSerieRupturaContinuada(
     linha,
     presencaReferenciaPorDia,
@@ -604,14 +604,13 @@ async function montarRelatorioDimensao({
   });
 
   if (tipo === TIPOS_AUDITORIA.RUPTURA) {
-    const continuidadePorDimensao = await carregarMapaContinuidadeRupturaPorGrupo(
-      {
+    const continuidadePorDimensao =
+      await carregarMapaContinuidadeRupturaPorGrupo({
         escopoLojaId,
         inicio,
         fim,
         expressaoGrupo: expressaoDimensao,
-      },
-    );
+      });
 
     return {
       periodo: { inicio, fim },
@@ -849,14 +848,13 @@ async function montarRelatorioCorredores({
     );
 
   if (tipo === TIPOS_AUDITORIA.RUPTURA) {
-    const continuidadePorCorredor = await carregarMapaContinuidadeRupturaPorGrupo(
-      {
+    const continuidadePorCorredor =
+      await carregarMapaContinuidadeRupturaPorGrupo({
         escopoLojaId,
         inicio,
         fim,
         expressaoGrupo: expressaoDimensaoRelatorio("local", "Sem corredor"),
-      },
-    );
+      });
 
     return {
       periodo: { inicio, fim },
@@ -1041,17 +1039,17 @@ async function montarPerfilColaborador({
   if (
     porTipo.some(
       (item) =>
-        item._id === TIPOS_AUDITORIA.RUPTURA && Number(item.totalLidos || 0) > 0,
+        item._id === TIPOS_AUDITORIA.RUPTURA &&
+        Number(item.totalLidos || 0) > 0,
     )
   ) {
-    const presencaReferenciaPorDia = await carregarPresencaReferenciaMetricasPorDia(
-      {
+    const presencaReferenciaPorDia =
+      await carregarPresencaReferenciaMetricasPorDia({
         lojaId: escopoLojaId || colab.loja,
         colaboradorId: colab._id,
         inicio,
         fim,
-      },
-    );
+      });
 
     serie = serieBruta.map((linha) =>
       aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia),
@@ -1692,14 +1690,13 @@ async function montarPerfilLoja({
   let resumoRupturaContinuada = null;
 
   if (Number(totaisPorTipo[TIPOS_AUDITORIA.RUPTURA]?.totalLidos || 0) > 0) {
-    const presencaReferenciaPorDia = await carregarPresencaReferenciaMetricasPorDia(
-      {
+    const presencaReferenciaPorDia =
+      await carregarPresencaReferenciaMetricasPorDia({
         lojaId: lojaObjectId,
         colaboradorId: null,
         inicio,
         fim,
-      },
-    );
+      });
 
     serie = serieBruta.map((linha) =>
       aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia),
@@ -1711,10 +1708,11 @@ async function montarPerfilLoja({
     );
 
     if (resumoRupturaContinuada.baseContinuidade) {
-      totaisPorTipo[TIPOS_AUDITORIA.RUPTURA] = aplicarContinuidadeRupturaAoResumo(
-        totaisPorTipo[TIPOS_AUDITORIA.RUPTURA],
-        resumoRupturaContinuada,
-      );
+      totaisPorTipo[TIPOS_AUDITORIA.RUPTURA] =
+        aplicarContinuidadeRupturaAoResumo(
+          totaisPorTipo[TIPOS_AUDITORIA.RUPTURA],
+          resumoRupturaContinuada,
+        );
     }
   }
 
@@ -1984,6 +1982,16 @@ async function calcularRankingGeralPortal(escopoLojaId, colaboradorId) {
         totalLidos: { $sum: "$totalLidos" },
       },
     },
+    {
+      $lookup: {
+        from: "colaboradors",
+        localField: "_id",
+        foreignField: "_id",
+        as: "colaborador",
+      },
+    },
+    { $unwind: "$colaborador" },
+    { $match: { "colaborador.ativo": true } },
     { $sort: { totalLidos: -1 } },
   ]);
 
@@ -2189,7 +2197,10 @@ router.get(
             colaborador: null,
             cancelada: { $ne: true },
             tipo: TIPOS_AUDITORIA.PRESENCA,
-            data: { $gte: inicioPresencaReferencia, $lte: fimPresencaReferencia },
+            data: {
+              $gte: inicioPresencaReferencia,
+              $lte: fimPresencaReferencia,
+            },
             ...(req.escopoLojaId
               ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
               : {}),
@@ -2283,13 +2294,11 @@ router.get(
         taxaConformidade: resumoRupturaIntegrada.taxaConformidade,
       };
 
-      totalGeral.totalItensAuditaveis =
-        resumoRupturaIntegrada.basePresenca;
+      totalGeral.totalItensAuditaveis = resumoRupturaIntegrada.basePresenca;
       totalGeral.totalLidos = resumoRupturaIntegrada.basePresenca;
       totalGeral.totalConformes = resumoRupturaIntegrada.itensConcluidos;
       totalGeral.totalNaoConformes = resumoRupturaIntegrada.itensRestantes;
-      totalGeral.taxaConformidade =
-        resumoRupturaIntegrada.taxaConformidade;
+      totalGeral.taxaConformidade = resumoRupturaIntegrada.taxaConformidade;
     }
 
     const serie = serieBruta.map((linha) => {
@@ -2533,8 +2542,12 @@ router.get(
       colaboradoresAtivos,
       totalDesatualizados,
       totalNaoLidos,
-      custoRupturaPresenca: Number((resumoCustoRupturaPresenca[0]?.total || 0).toFixed(2)),
-      custoRupturaOperacionalRuptura: Number((resumoCustoRupturaRuptura[0]?.total || 0).toFixed(2)),
+      custoRupturaPresenca: Number(
+        (resumoCustoRupturaPresenca[0]?.total || 0).toFixed(2),
+      ),
+      custoRupturaOperacionalRuptura: Number(
+        (resumoCustoRupturaRuptura[0]?.total || 0).toFixed(2),
+      ),
       ultimasAuditorias,
     });
   }),
@@ -2757,9 +2770,7 @@ async function executarRankingColaboradoresRupturaContinuada({
     };
 
     itemAtual.totalLidos += Number(ruptura.totalLidos || 0);
-    itemAtual.totalItensAuditaveis += Number(
-      ruptura.totalItensAuditaveis || 0,
-    );
+    itemAtual.totalItensAuditaveis += Number(ruptura.totalItensAuditaveis || 0);
     itemAtual.totalConformes += Number(ruptura.totalConformes || 0);
     itemAtual.totalNaoConformes += Number(ruptura.totalNaoConformes || 0);
     itemAtual.pontuacao += Number(ruptura.pontuacao || 0);
@@ -2768,9 +2779,7 @@ async function executarRankingColaboradoresRupturaContinuada({
     itemAtual.totalAuditorias += 1;
     itemAtual.auditoriasRuptura += 1;
 
-    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
-      ruptura._id.dia,
-    );
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(ruptura._id.dia);
     if (diaPresencaAnterior) {
       const resumo = resumirRupturaIntegradaDashboard(
         ruptura,
@@ -2789,7 +2798,7 @@ async function executarRankingColaboradoresRupturaContinuada({
     (id) => new mongoose.Types.ObjectId(id),
   );
   const colaboradores = colaboradoresIds.length
-    ? await Colaborador.find({ _id: { $in: colaboradoresIds } })
+    ? await Colaborador.find({ _id: { $in: colaboradoresIds }, ativo: true })
         .select({
           _id: 1,
           nome: 1,
@@ -2812,7 +2821,9 @@ async function executarRankingColaboradoresRupturaContinuada({
       const taxaConformidade = item.continuidade.baseContinuidade
         ? taxaContinuidadeRuptura(item.continuidade)
         : calcularTaxaResumoPadrao(TIPOS_AUDITORIA.RUPTURA, item);
-      const colaborador = colaboradorPorId.get(String(item._id)) || {};
+      const colaborador = colaboradorPorId.get(String(item._id));
+
+      if (!colaborador) return null;
 
       return {
         _id: item._id,
@@ -2836,13 +2847,14 @@ async function executarRankingColaboradoresRupturaContinuada({
           RUPTURA: item.auditoriasRuptura,
         },
         dias: item.dias,
-        nome: colaborador.nome || "Sem colaborador",
-        codigoExterno: colaborador.codigoExterno || "-",
+        nome: colaborador.nome,
+        codigoExterno: colaborador.codigoExterno,
         nivel: Number(colaborador.nivel || 1),
         avatarUrl: colaborador.avatarUrl || "",
         conquistas: colaborador.conquistas || [],
       };
     })
+    .filter(Boolean)
     .sort((a, b) => b.pontuacao - a.pontuacao || b.totalLidos - a.totalLidos)
     .slice(0, 100);
 }
@@ -2932,9 +2944,7 @@ async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
     };
 
     itemAtual.totalLidos += Number(ruptura.totalLidos || 0);
-    itemAtual.totalItensAuditaveis += Number(
-      ruptura.totalItensAuditaveis || 0,
-    );
+    itemAtual.totalItensAuditaveis += Number(ruptura.totalItensAuditaveis || 0);
     itemAtual.totalConformes += Number(ruptura.totalConformes || 0);
     itemAtual.totalNaoConformes += Number(ruptura.totalNaoConformes || 0);
     itemAtual.pontuacao += Number(ruptura.pontuacao || 0);
@@ -2944,9 +2954,7 @@ async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
     itemAtual.auditoriasCanceladas += ruptura.cancelada ? 1 : 0;
     itemAtual.dias += 1;
 
-    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
-      ruptura._id.dia,
-    );
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(ruptura._id.dia);
     if (diaPresencaAnterior) {
       const resumo = resumirRupturaIntegradaDashboard(
         ruptura,
@@ -3032,8 +3040,7 @@ async function executarRankingColaboradores({
   dataFim,
 }) {
   const matchBase = { colaborador: { $ne: null } };
-  if (escopoLojaId)
-    matchBase.loja = new mongoose.Types.ObjectId(escopoLojaId);
+  if (escopoLojaId) matchBase.loja = new mongoose.Types.ObjectId(escopoLojaId);
   if (tipo) matchBase.tipo = tipo;
 
   const { inicio, fim } = await intervaloPeriodo(periodo, {
@@ -3132,8 +3139,6 @@ async function executarRankingColaboradores({
           },
         },
       },
-      { $sort: { pontuacao: -1, totalLidos: -1 } },
-      { $limit: 100 },
       {
         $lookup: {
           from: "colaboradors",
@@ -3143,6 +3148,9 @@ async function executarRankingColaboradores({
         },
       },
       { $unwind: "$colaborador" },
+      { $match: { "colaborador.ativo": true } },
+      { $sort: { pontuacao: -1, totalLidos: -1 } },
+      { $limit: 100 },
       {
         $project: {
           _id: 1,

@@ -113,6 +113,9 @@ export async function processarPlanilha({
     auditoria.status = auditoriaCancelada ? "CANCELADA" : "PROCESSANDO";
     auditoria.arquivoOriginal = filename;
     auditoria.enviadoPor = usuarioId;
+    auditoria.excluida = false;
+    auditoria.excluidaEm = undefined;
+    auditoria.excluidaPor = undefined;
     await auditoria.save();
   } else {
     auditoria = await Auditoria.create({

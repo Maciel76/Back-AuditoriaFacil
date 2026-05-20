@@ -17,6 +17,20 @@ import path from "node:path";
 
 const router = Router();
 
+function filtroAtivoPorConsulta(status, usuario) {
+  const podeGerenciar = [ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(
+    usuario?.role,
+  );
+  if (!podeGerenciar) return { ativo: true };
+
+  const statusNormalizado = String(status || "active")
+    .trim()
+    .toLowerCase();
+  if (statusNormalizado === "all") return {};
+  if (statusNormalizado === "inactive") return { ativo: false };
+  return { ativo: true };
+}
+
 function autenticarAdminOuColaborador(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -95,7 +109,9 @@ router.post(
         if (String(req.usuario.colaborador || "") !== String(colab._id)) {
           throw httpError(403, "Você só pode alterar sua própria foto");
         }
-      } else if (![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role)) {
+      } else if (
+        ![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role)
+      ) {
         throw httpError(403, "Sem permissão para alterar esta foto");
       } else if (
         req.usuario.role === ROLES.STORE_ADMIN &&
@@ -131,8 +147,8 @@ router.get(
   "/",
   escopoLoja,
   asyncHandler(async (req, res) => {
-    const { q, page = 1, limit = 50 } = req.query;
-    const filtro = {};
+    const { q, page = 1, limit = 50, status } = req.query;
+    const filtro = filtroAtivoPorConsulta(status, req.usuario);
     if (req.escopoLojaId) filtro.loja = req.escopoLojaId;
     if (q)
       filtro.$or = [
@@ -161,6 +177,7 @@ const createSchema = z.object({
 });
 
 const updateSchema = createSchema.partial();
+const toggleAtivoSchema = z.object({ ativo: z.boolean() });
 
 router.post(
   "/",
@@ -194,6 +211,39 @@ router.put(
     );
     if (!c) throw httpError(404, "Colaborador não encontrado");
     res.json(c);
+  }),
+);
+
+router.patch(
+  "/:id/ativo",
+  escopoLoja,
+  exigirEscopoLoja,
+  exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
+  asyncHandler(async (req, res) => {
+    const { ativo } = toggleAtivoSchema.parse(req.body);
+    const colab = await Colaborador.findOne({
+      _id: req.params.id,
+      loja: req.escopoLojaId,
+    });
+    if (!colab) throw httpError(404, "Colaborador não encontrado");
+
+    if (colab.usuario) {
+      await Usuario.updateOne(
+        { _id: colab.usuario, role: ROLES.COLABORADOR },
+        { $set: { ativo } },
+      );
+    }
+
+    colab.ativo = ativo;
+    await colab.save();
+
+    res.json({
+      ok: true,
+      colaborador: colab,
+      mensagem: ativo
+        ? "Colaborador reativado com sucesso"
+        : "Colaborador marcado como inativo",
+    });
   }),
 );
 
