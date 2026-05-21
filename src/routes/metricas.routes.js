@@ -2033,7 +2033,14 @@ router.get(
       dataInicio: req.query.dataInicio,
       dataFim: req.query.dataFim,
     });
-    res.json({ periodo: { inicio, fim }, items });
+    const itemsOrdenados = [...items].sort(
+      (a, b) =>
+        (Number(b?.totalLidos || 0) - Number(a?.totalLidos || 0)) ||
+        (Number(b?.pontuacao || 0) - Number(a?.pontuacao || 0)) ||
+        String(a?.nome || "").localeCompare(String(b?.nome || ""), "pt-BR"),
+    );
+
+    res.json({ periodo: { inicio, fim }, items: itemsOrdenados });
   }),
 );
 
