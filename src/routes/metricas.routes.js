@@ -1820,6 +1820,24 @@ router.get(
     };
     if (req.escopoLojaId)
       matchEtiquetaBase.loja = new mongoose.Types.ObjectId(req.escopoLojaId);
+    const matchCustoRupturaPresenca = {
+      tipo: TIPOS_AUDITORIA.PRESENCA,
+      situacao: "Sem Presença e Com Estoque",
+      ...FILTRO_ITENS_ATIVOS,
+      data: { $gte: inicio, $lte: fim },
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+    };
+    const matchCustoRupturaRuptura = {
+      tipo: TIPOS_AUDITORIA.RUPTURA,
+      situacao: "Sem Presença e Com Estoque",
+      ...FILTRO_ITENS_ATIVOS,
+      data: { $gte: inicio, $lte: fim },
+      ...(req.escopoLojaId
+        ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+        : {}),
+    };
     const [
       resumoAuditorias,
       produtosNaoAuditados,
@@ -1829,6 +1847,8 @@ router.get(
       ultimasAuditorias,
       totalDesatualizados,
       totalNaoLidos,
+      resumoCustoRupturaPresenca,
+      resumoCustoRupturaRuptura,
     ] = await Promise.all([
       Auditoria.aggregate([
         { $match: matchAuditoriasResumo },
@@ -1868,6 +1888,24 @@ router.get(
         ...matchEtiquetaBase,
         situacao: "Não lidos com estoque",
       }),
+      AuditItem.aggregate([
+        { $match: matchCustoRupturaPresenca },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ["$custoRuptura", 0] } },
+          },
+        },
+      ]),
+      AuditItem.aggregate([
+        { $match: matchCustoRupturaRuptura },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ["$custoRuptura", 0] } },
+          },
+        },
+      ]),
     ]);
 
     const resumoCardsPresenca =
@@ -1906,6 +1944,8 @@ router.get(
       colaboradoresAtivos,
       totalDesatualizados,
       totalNaoLidos,
+      custoRupturaPresenca: Number((resumoCustoRupturaPresenca[0]?.total || 0).toFixed(2)),
+      custoRupturaOperacionalRuptura: Number((resumoCustoRupturaRuptura[0]?.total || 0).toFixed(2)),
       ultimasAuditorias,
     });
   }),

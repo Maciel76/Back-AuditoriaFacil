@@ -32,8 +32,26 @@ function parseDataHora(data, hora) {
 function parseNumero(v) {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return v;
-  const s = String(v).replace(/\./g, '').replace(',', '.').replace(/[^\d.\-]/g, '');
-  const n = Number(s);
+  const s = String(v).trim().replace(/\s+/g, '');
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+
+  let normalized = s;
+  if (lastComma > -1 && lastDot > -1) {
+    normalized =
+      lastComma > lastDot
+        ? s.replace(/\./g, '').replace(',', '.')
+        : s.replace(/,/g, '');
+  } else if (lastComma > -1) {
+    const decimalDigits = s.length - lastComma - 1;
+    normalized =
+      decimalDigits === 3 ? s.replace(/,/g, '') : s.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot > -1) {
+    const decimalDigits = s.length - lastDot - 1;
+    normalized = decimalDigits === 3 ? s.replace(/\./g, '') : s;
+  }
+
+  const n = Number(normalized.replace(/[^\d.\-]/g, ''));
   return Number.isFinite(n) ? n : null;
 }
 
