@@ -46,6 +46,69 @@ function resumirPresencaDashboard(row) {
   };
 }
 
+function inicioSemanaOperacional(data) {
+  const dia = dayjs(data).startOf("day");
+  if (!dia.isValid()) return null;
+  const deslocamento = (dia.day() + 6) % 7;
+  return dia.subtract(deslocamento, "day");
+}
+
+function chaveDiaOperacional(data) {
+  const dia = dayjs(data).startOf("day");
+  return dia.isValid() ? dia.format("YYYY-MM-DD") : null;
+}
+
+function chavePresencaReferenciaRuptura(dataRuptura) {
+  const ruptura = dayjs(dataRuptura).startOf("day");
+  if (!ruptura.isValid()) return null;
+
+  const presencaAnterior = ruptura.subtract(1, "day");
+  const semanaRuptura = inicioSemanaOperacional(ruptura);
+  const semanaPresenca = inicioSemanaOperacional(presencaAnterior);
+
+  if (!semanaRuptura || !semanaPresenca) return null;
+  if (!semanaRuptura.isSame(semanaPresenca, "day")) return null;
+
+  return presencaAnterior.format("YYYY-MM-DD");
+}
+
+function intervaloPresencaReferencia(inicio, fim) {
+  return {
+    inicio: dayjs(inicio).subtract(1, "day").startOf("day").toDate(),
+    fim: dayjs(fim).subtract(1, "day").endOf("day").toDate(),
+  };
+}
+
+function resumirRupturaIntegradaDashboard(
+  rupturaRow,
+  presencaAnteriorRow,
+  dataRuptura = rupturaRow?._id?.dia || rupturaRow?.data,
+) {
+  if (!chavePresencaReferenciaRuptura(dataRuptura) || !presencaAnteriorRow) {
+    return {
+      basePresenca: 0,
+      itensConcluidos: 0,
+      itensRestantes: 0,
+      taxaConformidade: 0,
+    };
+  }
+
+  const basePresenca = Number(presencaAnteriorRow?.presencaComEstoque || 0) +
+    Number(presencaAnteriorRow?.semPresencaComEstoque || 0);
+  const itensRestantes = Number(rupturaRow?.semPresencaComEstoque || 0);
+  const itensConcluidos = Math.max(basePresenca - itensRestantes, 0);
+
+  return {
+    basePresenca,
+    itensConcluidos,
+    itensRestantes,
+    taxaConformidade:
+      basePresenca > 0
+        ? Number(((itensConcluidos / basePresenca) * 100).toFixed(2))
+        : 0,
+  };
+}
+
 /**
  * Calcula intervalo de datas a partir do nome do período.
  * Períodos suportados: 1d (hoje), semana, mes, ano, 7d, 30d, 90d, tudo, custom.
@@ -125,6 +188,242 @@ function expressaoDimensaoRelatorio(campo, fallback) {
       `$${campo}`,
     ],
   };
+}
+
+function criarAcumuladorContinuidadeRuptura() {
+  return {
+    baseContinuidade: 0,
+    concluidosContinuidade: 0,
+    restantesContinuidade: 0,
+  };
+}
+
+function acumularContinuidadeRuptura(acumulado, resumo) {
+  if (!resumo?.basePresenca) return acumulado;
+
+  acumulado.baseContinuidade += Number(resumo.basePresenca || 0);
+  acumulado.concluidosContinuidade += Number(resumo.itensConcluidos || 0);
+  acumulado.restantesContinuidade += Number(resumo.itensRestantes || 0);
+  return acumulado;
+}
+
+function taxaContinuidadeRuptura(acumulado, casas = 2) {
+  if (!acumulado?.baseContinuidade) return 0;
+  return Number(
+    (
+      (Number(acumulado.concluidosContinuidade || 0) /
+        Number(acumulado.baseContinuidade || 0)) *
+      100
+    ).toFixed(casas),
+  );
+}
+
+function aplicarContinuidadeRupturaAoResumo(item, acumulado) {
+  if (!acumulado?.baseContinuidade) return item;
+
+  return {
+    ...item,
+    baseContinuidade: Number(acumulado.baseContinuidade || 0),
+    concluidosContinuidade: Number(acumulado.concluidosContinuidade || 0),
+    restantesContinuidade: Number(acumulado.restantesContinuidade || 0),
+    taxaConformidade: taxaContinuidadeRuptura(acumulado),
+  };
+}
+
+async function carregarMapaContinuidadeRupturaPorGrupo({
+  escopoLojaId,
+  inicio,
+  fim,
+  expressaoGrupo,
+}) {
+  const matchEscopo = escopoLojaId
+    ? { loja: new mongoose.Types.ObjectId(escopoLojaId) }
+    : {};
+  const intervaloReferencia = intervaloPresencaReferencia(inicio, fim);
+
+  const [presencas, rupturas] = await Promise.all([
+    AuditItem.aggregate([
+      {
+        $match: {
+          ...matchEscopo,
+          ...FILTRO_ITENS_ATIVOS,
+          tipo: TIPOS_AUDITORIA.PRESENCA,
+          data: {
+            $gte: intervaloReferencia.inicio,
+            $lte: intervaloReferencia.fim,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            grupo: expressaoGrupo,
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          presencaComEstoque: {
+            $sum: {
+              $cond: [
+                { $eq: ["$situacao", SITUACOES_DASHBOARD_PRESENCA.lidos] },
+                1,
+                0,
+              ],
+            },
+          },
+          semPresencaComEstoque: {
+            $sum: {
+              $cond: [
+                { $eq: ["$situacao", SITUACOES_DASHBOARD_PRESENCA.naoLidos] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
+    AuditItem.aggregate([
+      {
+        $match: {
+          ...matchEscopo,
+          ...FILTRO_ITENS_ATIVOS,
+          tipo: TIPOS_AUDITORIA.RUPTURA,
+          data: { $gte: inicio, $lte: fim },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            grupo: expressaoGrupo,
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          semPresencaComEstoque: {
+            $sum: {
+              $cond: [
+                { $eq: ["$situacao", SITUACOES_DASHBOARD_PRESENCA.naoLidos] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  ]);
+
+  const presencaPorGrupoDia = new Map(
+    presencas.map((linha) => [`${linha._id.grupo}|${linha._id.dia}`, linha]),
+  );
+  const continuidadePorGrupo = new Map();
+
+  for (const ruptura of rupturas) {
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
+      ruptura._id.dia,
+    );
+    if (!diaPresencaAnterior) continue;
+
+    const resumo = resumirRupturaIntegradaDashboard(
+      ruptura,
+      presencaPorGrupoDia.get(
+        `${ruptura._id.grupo}|${diaPresencaAnterior}`,
+      ),
+      ruptura._id.dia,
+    );
+
+    if (!resumo.basePresenca) continue;
+
+    const acumulado =
+      continuidadePorGrupo.get(ruptura._id.grupo) ||
+      criarAcumuladorContinuidadeRuptura();
+    continuidadePorGrupo.set(
+      ruptura._id.grupo,
+      acumularContinuidadeRuptura(acumulado, resumo),
+    );
+  }
+
+  return continuidadePorGrupo;
+}
+
+async function carregarPresencaReferenciaMetricasPorDia({
+  lojaId,
+  colaboradorId,
+  inicio,
+  fim,
+}) {
+  const intervaloReferencia = intervaloPresencaReferencia(inicio, fim);
+  const match = {
+    cancelada: { $ne: true },
+    tipo: TIPOS_AUDITORIA.PRESENCA,
+    data: {
+      $gte: intervaloReferencia.inicio,
+      $lte: intervaloReferencia.fim,
+    },
+  };
+
+  if (lojaId) match.loja = new mongoose.Types.ObjectId(lojaId);
+  if (colaboradorId === null) match.colaborador = null;
+  else if (colaboradorId) {
+    match.colaborador = new mongoose.Types.ObjectId(colaboradorId);
+  }
+
+  const linhas = await MetricaDiaria.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: {
+          dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+        },
+        presencaComEstoque: {
+          $sum: somarSituacaoMapa(SITUACOES_DASHBOARD_PRESENCA.lidos),
+        },
+        semPresencaComEstoque: {
+          $sum: somarSituacaoMapa(SITUACOES_DASHBOARD_PRESENCA.naoLidos),
+        },
+      },
+    },
+  ]);
+
+  return new Map(linhas.map((linha) => [linha._id.dia, linha]));
+}
+
+function resumirLinhaSerieRupturaContinuada(linha, presencaReferenciaPorDia) {
+  if (linha?._id?.tipo !== TIPOS_AUDITORIA.RUPTURA) return null;
+
+  const diaPresencaAnterior = chavePresencaReferenciaRuptura(linha._id.dia);
+  if (!diaPresencaAnterior) return null;
+
+  return resumirRupturaIntegradaDashboard(
+    {
+      semPresencaComEstoque: Number(linha.semPresencaComEstoque || 0),
+    },
+    presencaReferenciaPorDia.get(diaPresencaAnterior),
+    linha._id.dia,
+  );
+}
+
+function aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia) {
+  const resumo = resumirLinhaSerieRupturaContinuada(
+    linha,
+    presencaReferenciaPorDia,
+  );
+  if (!resumo?.basePresenca) return linha;
+
+  return {
+    ...linha,
+    baseContinuidade: Number(resumo.basePresenca || 0),
+    concluidosContinuidade: Number(resumo.itensConcluidos || 0),
+    restantesContinuidade: Number(resumo.itensRestantes || 0),
+    taxaConformidade: Number(resumo.percentualConclusao || 0),
+  };
+}
+
+function resumirContinuidadeRupturaDaSerie(serie, presencaReferenciaPorDia) {
+  return (serie || []).reduce((acumulado, linha) => {
+    const resumo = resumirLinhaSerieRupturaContinuada(
+      linha,
+      presencaReferenciaPorDia,
+    );
+    return acumularContinuidadeRuptura(acumulado, resumo);
+  }, criarAcumuladorContinuidadeRuptura());
 }
 
 async function montarRelatorioDimensao({
@@ -298,6 +597,27 @@ async function montarRelatorioDimensao({
       totalColaboradores: colaboradores.length,
     };
   });
+
+  if (tipo === TIPOS_AUDITORIA.RUPTURA) {
+    const continuidadePorDimensao = await carregarMapaContinuidadeRupturaPorGrupo(
+      {
+        escopoLojaId,
+        inicio,
+        fim,
+        expressaoGrupo: expressaoDimensao,
+      },
+    );
+
+    return {
+      periodo: { inicio, fim },
+      items: items.map((item) =>
+        aplicarContinuidadeRupturaAoResumo(
+          item,
+          continuidadePorDimensao.get(item.nome),
+        ),
+      ),
+    };
+  }
 
   return { periodo: { inicio, fim }, items };
 }
@@ -523,6 +843,27 @@ async function montarRelatorioCorredores({
         b.totalLidos - a.totalLidos || a.nome.localeCompare(b.nome, "pt-BR"),
     );
 
+  if (tipo === TIPOS_AUDITORIA.RUPTURA) {
+    const continuidadePorCorredor = await carregarMapaContinuidadeRupturaPorGrupo(
+      {
+        escopoLojaId,
+        inicio,
+        fim,
+        expressaoGrupo: expressaoDimensaoRelatorio("local", "Sem corredor"),
+      },
+    );
+
+    return {
+      periodo: { inicio, fim },
+      items: itemsResumo.map((item) =>
+        aplicarContinuidadeRupturaAoResumo(
+          item,
+          continuidadePorCorredor.get(item.nome),
+        ),
+      ),
+    };
+  }
+
   return { periodo: { inicio, fim }, items: itemsResumo };
 }
 
@@ -653,12 +994,13 @@ async function montarPerfilColaborador({
     data: { $gte: inicio, $lte: fim },
   };
 
-  const porTipo = await MetricaDiaria.aggregate([
+  const porTipoBruto = await MetricaDiaria.aggregate([
     { $match: matchColab },
     {
       $group: {
         _id: "$tipo",
         totalLidos: { $sum: "$totalLidos" },
+        totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
         totalConformes: { $sum: "$totalConformes" },
         totalNaoConformes: { $sum: "$totalNaoConformes" },
         pontuacao: { $sum: "$pontuacao" },
@@ -666,7 +1008,7 @@ async function montarPerfilColaborador({
     },
   ]);
 
-  const serie = await MetricaDiaria.aggregate([
+  const serieBruta = await MetricaDiaria.aggregate([
     { $match: matchColab },
     {
       $group: {
@@ -676,11 +1018,53 @@ async function montarPerfilColaborador({
         },
         totalLidos: { $sum: "$totalLidos" },
         totalConformes: { $sum: "$totalConformes" },
+        semPresencaComEstoque: {
+          $sum: somarSituacaoMapa(SITUACOES_DASHBOARD_PRESENCA.naoLidos),
+        },
         pontuacao: { $sum: "$pontuacao" },
       },
     },
     { $sort: { "_id.dia": 1 } },
   ]);
+
+  let porTipo = porTipoBruto.map((item) => ({
+    ...item,
+    taxaConformidade: calcTaxaPerfil(item._id, item),
+  }));
+  let serie = serieBruta;
+
+  if (
+    porTipo.some(
+      (item) =>
+        item._id === TIPOS_AUDITORIA.RUPTURA && Number(item.totalLidos || 0) > 0,
+    )
+  ) {
+    const presencaReferenciaPorDia = await carregarPresencaReferenciaMetricasPorDia(
+      {
+        lojaId: escopoLojaId || colab.loja,
+        colaboradorId: colab._id,
+        inicio,
+        fim,
+      },
+    );
+
+    serie = serieBruta.map((linha) =>
+      aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia),
+    );
+
+    const resumoRupturaContinuada = resumirContinuidadeRupturaDaSerie(
+      serieBruta,
+      presencaReferenciaPorDia,
+    );
+
+    if (resumoRupturaContinuada.baseContinuidade) {
+      porTipo = porTipo.map((item) =>
+        item._id === TIPOS_AUDITORIA.RUPTURA
+          ? aplicarContinuidadeRupturaAoResumo(item, resumoRupturaContinuada)
+          : item,
+      );
+    }
+  }
 
   return { colaborador: colab, periodo: { inicio, fim }, porTipo, serie };
 }
@@ -1279,7 +1663,7 @@ async function montarPerfilLoja({
         )
       : 0;
 
-  const serie = await MetricaDiaria.aggregate([
+  const serieBruta = await MetricaDiaria.aggregate([
     { $match: matchMetricas },
     {
       $group: {
@@ -1289,12 +1673,77 @@ async function montarPerfilLoja({
         },
         totalLidos: { $sum: "$totalLidos" },
         totalConformes: { $sum: "$totalConformes" },
+        semPresencaComEstoque: {
+          $sum: somarSituacaoMapa(SITUACOES_DASHBOARD_PRESENCA.naoLidos),
+        },
         taxaConformidade: { $avg: "$taxaConformidade" },
         pontuacao: { $sum: "$pontuacao" },
       },
     },
     { $sort: { "_id.dia": 1 } },
   ]);
+
+  let serie = serieBruta;
+  let resumoRupturaContinuada = null;
+
+  if (Number(totaisPorTipo[TIPOS_AUDITORIA.RUPTURA]?.totalLidos || 0) > 0) {
+    const presencaReferenciaPorDia = await carregarPresencaReferenciaMetricasPorDia(
+      {
+        lojaId: lojaObjectId,
+        colaboradorId: null,
+        inicio,
+        fim,
+      },
+    );
+
+    serie = serieBruta.map((linha) =>
+      aplicarContinuidadeRupturaNaLinhaSerie(linha, presencaReferenciaPorDia),
+    );
+
+    resumoRupturaContinuada = resumirContinuidadeRupturaDaSerie(
+      serieBruta,
+      presencaReferenciaPorDia,
+    );
+
+    if (resumoRupturaContinuada.baseContinuidade) {
+      totaisPorTipo[TIPOS_AUDITORIA.RUPTURA] = aplicarContinuidadeRupturaAoResumo(
+        totaisPorTipo[TIPOS_AUDITORIA.RUPTURA],
+        resumoRupturaContinuada,
+      );
+    }
+  }
+
+  {
+    let numerador = 0;
+    let denominador = 0;
+
+    const etiquetaResumo = totaisPorTipo[TIPOS_AUDITORIA.ETIQUETA];
+    if (Number(etiquetaResumo?.totalItensAuditaveis || 0) > 0) {
+      numerador += Number(etiquetaResumo.totalLidos || 0);
+      denominador += Number(etiquetaResumo.totalItensAuditaveis || 0);
+    }
+
+    const presencaResumo = totaisPorTipo[TIPOS_AUDITORIA.PRESENCA];
+    if (Number(presencaResumo?.totalLidos || 0) > 0) {
+      numerador += Number(presencaResumo.totalConformes || 0);
+      denominador += Number(presencaResumo.totalLidos || 0);
+    }
+
+    if (Number(resumoRupturaContinuada?.baseContinuidade || 0) > 0) {
+      numerador += Number(resumoRupturaContinuada.concluidosContinuidade || 0);
+      denominador += Number(resumoRupturaContinuada.baseContinuidade || 0);
+    } else {
+      const rupturaResumo = totaisPorTipo[TIPOS_AUDITORIA.RUPTURA];
+      if (Number(rupturaResumo?.totalLidos || 0) > 0) {
+        numerador += Number(rupturaResumo.totalConformes || 0);
+        denominador += Number(rupturaResumo.totalLidos || 0);
+      }
+    }
+
+    totalGeral.taxaConformidade = denominador
+      ? Number(((numerador / denominador) * 100).toFixed(2))
+      : 0;
+  }
 
   const matchItens = {
     loja: lojaObjectId,
@@ -1600,6 +2049,8 @@ router.get(
       cancelada: { $ne: true },
       data: { $gte: inicio, $lte: fim },
     };
+    const integraRupturaComPresenca =
+      req.query.tipo === TIPOS_AUDITORIA.RUPTURA;
 
     const porTipo = await MetricaDiaria.aggregate([
       { $match: match },
@@ -1716,6 +2167,49 @@ router.get(
           : 0;
     }
 
+    let presencaReferenciaPorDia = new Map();
+    if (integraRupturaComPresenca) {
+      const inicioPresencaReferencia = dayjs(inicio)
+        .subtract(1, "day")
+        .startOf("day")
+        .toDate();
+      const fimPresencaReferencia = dayjs(fim)
+        .subtract(1, "day")
+        .endOf("day")
+        .toDate();
+
+      const presencaReferenciaBruta = await MetricaDiaria.aggregate([
+        {
+          $match: {
+            colaborador: null,
+            cancelada: { $ne: true },
+            tipo: TIPOS_AUDITORIA.PRESENCA,
+            data: { $gte: inicioPresencaReferencia, $lte: fimPresencaReferencia },
+            ...(req.escopoLojaId
+              ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) }
+              : {}),
+          },
+        },
+        {
+          $group: {
+            _id: {
+              dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+            },
+            presencaComEstoque: somarSituacaoMapa(
+              SITUACOES_DASHBOARD_PRESENCA.lidos,
+            ),
+            semPresencaComEstoque: somarSituacaoMapa(
+              SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+            ),
+          },
+        },
+      ]);
+
+      presencaReferenciaPorDia = new Map(
+        presencaReferenciaBruta.map((linha) => [linha._id.dia, linha]),
+      );
+    }
+
     // série temporal por dia
     const serieBruta = await MetricaDiaria.aggregate([
       { $match: match },
@@ -1740,15 +2234,97 @@ router.get(
       { $sort: { "_id.dia": 1 } },
     ]);
 
-    const serie = serieBruta.map((linha) => {
-      if (linha._id.tipo !== TIPOS_AUDITORIA.PRESENCA) return linha;
-      const resumoPresenca = resumirPresencaDashboard(linha);
-      return {
-        ...linha,
-        totalLidos: resumoPresenca.totalItens,
-        totalConformes: resumoPresenca.itensLidos,
-        taxaConformidade: resumoPresenca.taxaConformidade,
+    const resumoRupturaIntegrada = integraRupturaComPresenca
+      ? serieBruta
+          .filter((linha) => linha._id.tipo === TIPOS_AUDITORIA.RUPTURA)
+          .reduce(
+            (acumulado, linha) => {
+              const diaPresencaAnterior = chavePresencaReferenciaRuptura(
+                linha._id.dia,
+              );
+              if (!diaPresencaAnterior) return acumulado;
+              const resumo = resumirRupturaIntegradaDashboard(
+                linha,
+                presencaReferenciaPorDia.get(diaPresencaAnterior),
+                linha._id.dia,
+              );
+
+              if (resumo.basePresenca <= 0) return acumulado;
+
+              acumulado.basePresenca += resumo.basePresenca;
+              acumulado.itensConcluidos += resumo.itensConcluidos;
+              acumulado.itensRestantes += resumo.itensRestantes;
+              return acumulado;
+            },
+            { basePresenca: 0, itensConcluidos: 0, itensRestantes: 0 },
+          )
+      : null;
+
+    if (resumoRupturaIntegrada?.basePresenca > 0) {
+      resumoRupturaIntegrada.taxaConformidade = Number(
+        (
+          (resumoRupturaIntegrada.itensConcluidos /
+            resumoRupturaIntegrada.basePresenca) *
+          100
+        ).toFixed(2),
+      );
+
+      totaisPorTipo[TIPOS_AUDITORIA.RUPTURA] = {
+        ...totaisPorTipo[TIPOS_AUDITORIA.RUPTURA],
+        totalItensAuditaveis: resumoRupturaIntegrada.basePresenca,
+        totalLidos: resumoRupturaIntegrada.basePresenca,
+        totalConformes: resumoRupturaIntegrada.itensConcluidos,
+        totalNaoConformes: resumoRupturaIntegrada.itensRestantes,
+        taxaConformidade: resumoRupturaIntegrada.taxaConformidade,
       };
+
+      totalGeral.totalItensAuditaveis =
+        resumoRupturaIntegrada.basePresenca;
+      totalGeral.totalLidos = resumoRupturaIntegrada.basePresenca;
+      totalGeral.totalConformes = resumoRupturaIntegrada.itensConcluidos;
+      totalGeral.totalNaoConformes = resumoRupturaIntegrada.itensRestantes;
+      totalGeral.taxaConformidade =
+        resumoRupturaIntegrada.taxaConformidade;
+    }
+
+    const serie = serieBruta.map((linha) => {
+      if (linha._id.tipo === TIPOS_AUDITORIA.PRESENCA) {
+        const resumoPresenca = resumirPresencaDashboard(linha);
+        return {
+          ...linha,
+          totalLidos: resumoPresenca.totalItens,
+          totalConformes: resumoPresenca.itensLidos,
+          taxaConformidade: resumoPresenca.taxaConformidade,
+        };
+      }
+
+      if (
+        integraRupturaComPresenca &&
+        linha._id.tipo === TIPOS_AUDITORIA.RUPTURA
+      ) {
+        const diaPresencaAnterior = chavePresencaReferenciaRuptura(
+          linha._id.dia,
+        );
+        if (!diaPresencaAnterior) return linha;
+        const resumoRuptura = resumirRupturaIntegradaDashboard(
+          linha,
+          presencaReferenciaPorDia.get(diaPresencaAnterior),
+          linha._id.dia,
+        );
+
+        if (resumoRuptura.basePresenca > 0) {
+          return {
+            ...linha,
+            totalItensAuditaveis: resumoRuptura.basePresenca,
+            totalLidos: resumoRuptura.basePresenca,
+            totalConformes: resumoRuptura.itensConcluidos,
+            totalNaoConformes: resumoRuptura.itensRestantes,
+            taxaConformidade: resumoRuptura.taxaConformidade,
+          };
+        }
+      }
+
+      return linha;
     });
 
     const filtroAuditorias = req.escopoLojaId ? { loja: req.escopoLojaId } : {};
@@ -1855,6 +2431,7 @@ router.get(
         {
           $group: {
             _id: null,
+            totalAuditorias: { $sum: 1 },
             produtosAuditados: { $sum: { $ifNull: ["$totalLidos", 0] } },
             mediaConclusao: { $avg: { $ifNull: ["$taxaConformidade", 0] } },
           },
@@ -1912,6 +2489,11 @@ router.get(
       req.query.tipo === TIPOS_AUDITORIA.PRESENCA
         ? totaisPorTipo[TIPOS_AUDITORIA.PRESENCA]
         : null;
+    const resumoCardsRupturaIntegrada =
+      req.query.tipo === TIPOS_AUDITORIA.RUPTURA &&
+      resumoRupturaIntegrada?.basePresenca > 0
+        ? resumoRupturaIntegrada
+        : null;
     const produtosAuditadosResumo = Number(
       resumoCardsPresenca?.totalLidos ||
         resumoAuditorias[0]?.produtosAuditados ||
@@ -1919,13 +2501,15 @@ router.get(
     );
     const mediaConclusaoResumo = Number(
       (
-        resumoCardsPresenca?.taxaConformidade ||
-        resumoAuditorias[0]?.mediaConclusao ||
+        resumoCardsRupturaIntegrada?.taxaConformidade ??
+        resumoCardsPresenca?.taxaConformidade ??
+        resumoAuditorias[0]?.mediaConclusao ??
         0
       ).toFixed(2),
     );
 
     const cardsResumo = {
+      totalAuditorias: Number(resumoAuditorias[0]?.totalAuditorias || 0),
       produtosAuditados: produtosAuditadosResumo,
       mediaConclusao: mediaConclusaoResumo,
       produtosNaoAuditados: Number(produtosNaoAuditados || 0),
@@ -1965,6 +2549,400 @@ router.get(
 );
 
 // ============ RANKING DE COLABORADORES (escopo loja) ============
+function calcularTaxaResumoPadrao(tipoAtual, resumo) {
+  if (tipoAtual === TIPOS_AUDITORIA.ETIQUETA) {
+    return Number(resumo?.totalItensAuditaveis || 0) > 0
+      ? Number(
+          (
+            (Number(resumo?.totalLidos || 0) /
+              Number(resumo?.totalItensAuditaveis || 0)) *
+            100
+          ).toFixed(2),
+        )
+      : 0;
+  }
+
+  return Number(resumo?.totalLidos || 0) > 0
+    ? Number(
+        (
+          (Number(resumo?.totalConformes || 0) /
+            Number(resumo?.totalLidos || 0)) *
+          100
+        ).toFixed(2),
+      )
+    : 0;
+}
+
+function calcularPercentualConclusaoPadrao(resumo) {
+  return Number(resumo?.totalItensAuditaveis || 0) > 0
+    ? Number(
+        (
+          (Number(resumo?.totalLidos || 0) /
+            Number(resumo?.totalItensAuditaveis || 0)) *
+          100
+        ).toFixed(2),
+      )
+    : null;
+}
+
+function calcularPercentualRestante(percentualConclusao) {
+  return percentualConclusao == null
+    ? null
+    : Number(Math.max(0, 100 - Number(percentualConclusao || 0)).toFixed(2));
+}
+
+async function executarRankingColaboradoresRupturaContinuada({
+  escopoLojaId,
+  inicio,
+  fim,
+}) {
+  const matchEscopo = escopoLojaId
+    ? { loja: new mongoose.Types.ObjectId(escopoLojaId) }
+    : {};
+  const matchRuptura = {
+    ...matchEscopo,
+    colaborador: { $ne: null },
+    cancelada: { $ne: true },
+    tipo: TIPOS_AUDITORIA.RUPTURA,
+    data: { $gte: inicio, $lte: fim },
+  };
+  const referenciaPresenca = intervaloPresencaReferencia(inicio, fim);
+  const matchPresenca = {
+    ...matchEscopo,
+    colaborador: { $ne: null },
+    cancelada: { $ne: true },
+    tipo: TIPOS_AUDITORIA.PRESENCA,
+    data: {
+      $gte: referenciaPresenca.inicio,
+      $lte: referenciaPresenca.fim,
+    },
+  };
+
+  const [rupturas, presencas] = await Promise.all([
+    MetricaDiaria.aggregate([
+      { $match: matchRuptura },
+      {
+        $group: {
+          _id: {
+            colaborador: "$colaborador",
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          totalLidos: { $sum: "$totalLidos" },
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
+          totalConformes: { $sum: "$totalConformes" },
+          totalNaoConformes: { $sum: "$totalNaoConformes" },
+          pontuacao: { $sum: "$pontuacao" },
+          custoRuptura: { $sum: "$custoRuptura" },
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
+        },
+      },
+    ]),
+    MetricaDiaria.aggregate([
+      { $match: matchPresenca },
+      {
+        $group: {
+          _id: {
+            colaborador: "$colaborador",
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          presencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.lidos,
+          ),
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
+        },
+      },
+    ]),
+  ]);
+
+  const presencaPorColaboradorDia = new Map(
+    presencas.map((linha) => [
+      `${linha._id.colaborador}|${linha._id.dia}`,
+      linha,
+    ]),
+  );
+  const rankingMap = new Map();
+
+  for (const ruptura of rupturas) {
+    const colaboradorId = String(ruptura._id.colaborador);
+    const itemAtual = rankingMap.get(colaboradorId) || {
+      _id: ruptura._id.colaborador,
+      totalLidos: 0,
+      totalItensAuditaveis: 0,
+      totalConformes: 0,
+      totalNaoConformes: 0,
+      pontuacao: 0,
+      custoRuptura: 0,
+      dias: 0,
+      totalAuditorias: 0,
+      auditoriasEtiqueta: 0,
+      auditoriasPresenca: 0,
+      auditoriasRuptura: 0,
+      continuidade: criarAcumuladorContinuidadeRuptura(),
+    };
+
+    itemAtual.totalLidos += Number(ruptura.totalLidos || 0);
+    itemAtual.totalItensAuditaveis += Number(
+      ruptura.totalItensAuditaveis || 0,
+    );
+    itemAtual.totalConformes += Number(ruptura.totalConformes || 0);
+    itemAtual.totalNaoConformes += Number(ruptura.totalNaoConformes || 0);
+    itemAtual.pontuacao += Number(ruptura.pontuacao || 0);
+    itemAtual.custoRuptura += Number(ruptura.custoRuptura || 0);
+    itemAtual.dias += 1;
+    itemAtual.totalAuditorias += 1;
+    itemAtual.auditoriasRuptura += 1;
+
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
+      ruptura._id.dia,
+    );
+    if (diaPresencaAnterior) {
+      const resumo = resumirRupturaIntegradaDashboard(
+        ruptura,
+        presencaPorColaboradorDia.get(
+          `${colaboradorId}|${diaPresencaAnterior}`,
+        ),
+        ruptura._id.dia,
+      );
+      acumularContinuidadeRuptura(itemAtual.continuidade, resumo);
+    }
+
+    rankingMap.set(colaboradorId, itemAtual);
+  }
+
+  const colaboradoresIds = Array.from(rankingMap.keys()).map(
+    (id) => new mongoose.Types.ObjectId(id),
+  );
+  const colaboradores = colaboradoresIds.length
+    ? await Colaborador.find({ _id: { $in: colaboradoresIds } })
+        .select({
+          _id: 1,
+          nome: 1,
+          codigoExterno: 1,
+          nivel: 1,
+          avatarUrl: 1,
+          conquistas: 1,
+        })
+        .lean()
+    : [];
+  const colaboradorPorId = new Map(
+    colaboradores.map((colaborador) => [String(colaborador._id), colaborador]),
+  );
+
+  return Array.from(rankingMap.values())
+    .map((item) => {
+      const percentualConclusao = item.continuidade.baseContinuidade
+        ? taxaContinuidadeRuptura(item.continuidade)
+        : calcularPercentualConclusaoPadrao(item);
+      const taxaConformidade = item.continuidade.baseContinuidade
+        ? taxaContinuidadeRuptura(item.continuidade)
+        : calcularTaxaResumoPadrao(TIPOS_AUDITORIA.RUPTURA, item);
+      const colaborador = colaboradorPorId.get(String(item._id)) || {};
+
+      return {
+        _id: item._id,
+        totalLidos: item.totalLidos,
+        totalItensAuditaveis: item.totalItensAuditaveis,
+        totalConformes: item.totalConformes,
+        totalNaoConformes: item.totalNaoConformes,
+        pontuacao: Number(item.pontuacao.toFixed(2)),
+        taxaConformidade,
+        custoRuptura: Number(item.custoRuptura.toFixed(2)),
+        percentualConclusao,
+        percentualRestante: calcularPercentualRestante(percentualConclusao),
+        totalAuditorias: item.totalAuditorias,
+        auditoriasPorTipo: {
+          ETIQUETA: item.auditoriasEtiqueta,
+          PRESENCA: item.auditoriasPresenca,
+          RUPTURA: item.auditoriasRuptura,
+        },
+        dias: item.dias,
+        nome: colaborador.nome || "Sem colaborador",
+        codigoExterno: colaborador.codigoExterno || "-",
+        nivel: Number(colaborador.nivel || 1),
+        avatarUrl: colaborador.avatarUrl || "",
+        conquistas: colaborador.conquistas || [],
+      };
+    })
+    .sort((a, b) => b.pontuacao - a.pontuacao || b.totalLidos - a.totalLidos)
+    .slice(0, 100);
+}
+
+async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
+  const referenciaPresenca = intervaloPresencaReferencia(inicio, fim);
+
+  const [rupturas, presencas] = await Promise.all([
+    MetricaDiaria.aggregate([
+      {
+        $match: {
+          colaborador: null,
+          tipo: TIPOS_AUDITORIA.RUPTURA,
+          data: { $gte: inicio, $lte: fim },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            loja: "$loja",
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          totalLidos: { $sum: "$totalLidos" },
+          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
+          totalConformes: { $sum: "$totalConformes" },
+          totalNaoConformes: { $sum: "$totalNaoConformes" },
+          pontuacao: { $sum: "$pontuacao" },
+          custoRuptura: { $sum: "$custoRuptura" },
+          cancelada: { $max: "$cancelada" },
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
+        },
+      },
+    ]),
+    MetricaDiaria.aggregate([
+      {
+        $match: {
+          colaborador: null,
+          tipo: TIPOS_AUDITORIA.PRESENCA,
+          data: {
+            $gte: referenciaPresenca.inicio,
+            $lte: referenciaPresenca.fim,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            loja: "$loja",
+            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+          },
+          presencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.lidos,
+          ),
+          semPresencaComEstoque: somarSituacaoMapa(
+            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+          ),
+        },
+      },
+    ]),
+  ]);
+
+  const presencaPorLojaDia = new Map(
+    presencas.map((linha) => [`${linha._id.loja}|${linha._id.dia}`, linha]),
+  );
+  const rankingMap = new Map();
+
+  for (const ruptura of rupturas) {
+    const lojaId = String(ruptura._id.loja);
+    const itemAtual = rankingMap.get(lojaId) || {
+      _id: ruptura._id.loja,
+      totalLidos: 0,
+      totalItensAuditaveis: 0,
+      totalConformes: 0,
+      totalNaoConformes: 0,
+      pontuacao: 0,
+      custoRuptura: 0,
+      totalAuditorias: 0,
+      auditoriasEtiqueta: 0,
+      auditoriasPresenca: 0,
+      auditoriasRuptura: 0,
+      auditoriasCanceladas: 0,
+      dias: 0,
+      continuidade: criarAcumuladorContinuidadeRuptura(),
+    };
+
+    itemAtual.totalLidos += Number(ruptura.totalLidos || 0);
+    itemAtual.totalItensAuditaveis += Number(
+      ruptura.totalItensAuditaveis || 0,
+    );
+    itemAtual.totalConformes += Number(ruptura.totalConformes || 0);
+    itemAtual.totalNaoConformes += Number(ruptura.totalNaoConformes || 0);
+    itemAtual.pontuacao += Number(ruptura.pontuacao || 0);
+    itemAtual.custoRuptura += Number(ruptura.custoRuptura || 0);
+    itemAtual.totalAuditorias += 1;
+    itemAtual.auditoriasRuptura += 1;
+    itemAtual.auditoriasCanceladas += ruptura.cancelada ? 1 : 0;
+    itemAtual.dias += 1;
+
+    const diaPresencaAnterior = chavePresencaReferenciaRuptura(
+      ruptura._id.dia,
+    );
+    if (diaPresencaAnterior) {
+      const resumo = resumirRupturaIntegradaDashboard(
+        ruptura,
+        presencaPorLojaDia.get(`${lojaId}|${diaPresencaAnterior}`),
+        ruptura._id.dia,
+      );
+      acumularContinuidadeRuptura(itemAtual.continuidade, resumo);
+    }
+
+    rankingMap.set(lojaId, itemAtual);
+  }
+
+  const lojasIds = Array.from(rankingMap.keys()).map(
+    (id) => new mongoose.Types.ObjectId(id),
+  );
+  const lojas = lojasIds.length
+    ? await Loja.find({ _id: { $in: lojasIds } })
+        .select({
+          _id: 1,
+          nome: 1,
+          slug: 1,
+          codigo: 1,
+          cidade: 1,
+          estado: 1,
+          avatarUrl: 1,
+          nivel: 1,
+        })
+        .lean()
+    : [];
+  const lojaPorId = new Map(lojas.map((loja) => [String(loja._id), loja]));
+
+  return Array.from(rankingMap.values())
+    .map((item) => {
+      const percentualConclusao = item.continuidade.baseContinuidade
+        ? taxaContinuidadeRuptura(item.continuidade)
+        : calcularPercentualConclusaoPadrao(item);
+      const taxaConformidade = item.continuidade.baseContinuidade
+        ? taxaContinuidadeRuptura(item.continuidade)
+        : calcularTaxaResumoPadrao(TIPOS_AUDITORIA.RUPTURA, item);
+      const loja = lojaPorId.get(String(item._id)) || {};
+
+      return {
+        _id: item._id,
+        nome: loja.nome || "Loja sem nome",
+        slug: loja.slug || "",
+        codigo: loja.codigo || "",
+        cidade: loja.cidade || "",
+        estado: loja.estado || "",
+        avatarUrl: loja.avatarUrl || "",
+        nivel: Number(loja.nivel || 1),
+        totalLidos: item.totalLidos,
+        totalItensAuditaveis: item.totalItensAuditaveis,
+        totalConformes: item.totalConformes,
+        totalNaoConformes: item.totalNaoConformes,
+        pontuacao: Number(item.pontuacao.toFixed(2)),
+        taxaConformidade,
+        custoRuptura: Number(item.custoRuptura.toFixed(2)),
+        percentualConclusao,
+        percentualRestante: calcularPercentualRestante(percentualConclusao),
+        totalAuditorias: item.totalAuditorias,
+        auditoriasPorTipo: {
+          ETIQUETA: item.auditoriasEtiqueta,
+          PRESENCA: item.auditoriasPresenca,
+          RUPTURA: item.auditoriasRuptura,
+        },
+        auditoriasCanceladas: item.auditoriasCanceladas,
+        dias: item.dias,
+      };
+    })
+    .sort((a, b) => b.pontuacao - a.pontuacao)
+    .slice(0, 100);
+}
+
 async function executarRankingColaboradores({
   escopoLojaId,
   periodo = "1d",
@@ -1982,6 +2960,19 @@ async function executarRankingColaboradores({
     dataFim,
     match: matchBase,
   });
+
+  if (tipo === TIPOS_AUDITORIA.RUPTURA) {
+    return {
+      inicio,
+      fim,
+      items: await executarRankingColaboradoresRupturaContinuada({
+        escopoLojaId,
+        inicio,
+        fim,
+      }),
+    };
+  }
+
   const match = {
     ...matchBase,
     cancelada: { $ne: true },
@@ -2142,6 +3133,18 @@ router.get(
       dataFim: req.query.dataFim,
       match: matchBase,
     });
+
+    if (tipoFilter === TIPOS_AUDITORIA.RUPTURA) {
+      let items = await executarRankingLojasRupturaContinuada({ inicio, fim });
+      if (
+        ![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role) &&
+        req.usuario.loja
+      ) {
+        items = items.filter((r) => String(r._id) === String(req.usuario.loja));
+      }
+      return res.json({ periodo: { inicio, fim }, items });
+    }
+
     const match = { ...matchBase, data: { $gte: inicio, $lte: fim } };
 
     const ranking = await MetricaDiaria.aggregate([
