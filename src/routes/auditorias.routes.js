@@ -13,7 +13,10 @@ import {
 import { ROLES } from "../models/Usuario.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { processarPlanilha } from "../services/auditoriaProcessor.js";
-import { cancelarAuditoria } from "../services/auditoriaCancelamento.js";
+import {
+  cancelarAuditoria,
+  cancelarAuditoriaDoDia,
+} from "../services/auditoriaCancelamento.js";
 import { reclassificarAuditoria } from "../services/auditoriaReclassificacao.js";
 import { REGRAS } from "../services/regras.js";
 
@@ -32,6 +35,26 @@ function atualizarJob(jobId, patch) {
 function agendarLimpezaJob(jobId) {
   const timer = setTimeout(() => uploadJobs.delete(jobId), JOB_TTL_MS);
   timer.unref?.();
+}
+
+function normalizarDataDia(valor) {
+  const dataTexto = String(valor || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataTexto)) {
+    throw httpError(400, "Data da auditoria inválida");
+  }
+
+  const [ano, mes, dia] = dataTexto.split("-").map(Number);
+  const data = new Date(Date.UTC(ano, mes - 1, dia));
+  if (
+    Number.isNaN(data.valueOf()) ||
+    data.getUTCFullYear() !== ano ||
+    data.getUTCMonth() !== mes - 1 ||
+    data.getUTCDate() !== dia
+  ) {
+    throw httpError(400, "Data da auditoria inválida");
+  }
+
+  return data;
 }
 
 router.get("/regras", (_req, res) => res.json(REGRAS));
@@ -148,6 +171,36 @@ router.get(
   }),
 );
 
+router.post(
+  "/cancelar-dia",
+  escopoLoja,
+  exigirEscopoLoja,
+  exigirRole(ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const tipo = String(req.body?.tipo || "").toUpperCase().trim();
+    if (!Object.values(TIPOS_AUDITORIA).includes(tipo)) {
+      throw httpError(400, "Tipo de auditoria inválido");
+    }
+
+    const { auditoria, criada } = await cancelarAuditoriaDoDia({
+      lojaId: req.escopoLojaId,
+      usuarioId: req.usuario.id,
+      tipo,
+      data: normalizarDataDia(req.body?.data),
+      motivo: String(req.body?.motivo || "").trim(),
+    });
+
+    res.json({
+      ok: true,
+      criada,
+      auditoria: auditoria.toObject ? auditoria.toObject() : auditoria,
+      mensagem: criada
+        ? "Auditoria do dia cancelada sem planilha enviada."
+        : "Auditoria do dia cancelada. As métricas foram zeradas.",
+    });
+  }),
+);
+
 router.get(
   "/:id",
   escopoLoja,
@@ -224,7 +277,7 @@ router.post(
   "/:id/cancelar",
   escopoLoja,
   exigirEscopoLoja,
-  exigirRole(ROLES.SUPER_ADMIN),
+  exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
     const auditoria = await cancelarAuditoria({
       auditoriaId: req.params.id,

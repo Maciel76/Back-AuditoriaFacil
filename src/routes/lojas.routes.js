@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { fileURLToPath } from "node:url";
 import { Loja } from "../models/Loja.js";
 import { Auditoria, TIPOS_AUDITORIA } from "../models/Auditoria.js";
+import { AuditItem } from "../models/AuditItem.js";
 import { MetricaDiaria } from "../models/MetricaDiaria.js";
 import { Usuario, ROLES } from "../models/Usuario.js";
 import {
@@ -102,6 +103,7 @@ function resumoTipoVazio() {
     totalNaoConformes: 0,
     pontuacao: 0,
     custoRuptura: 0,
+    custoRupturaOperacional: 0,
     taxaConformidade: 0,
   };
 }
@@ -117,6 +119,7 @@ function resumoPeriodoVazio() {
     totalNaoConformes: 0,
     pontuacao: 0,
     custoRuptura: 0,
+    custoRupturaOperacionalRuptura: 0,
     taxaConformidade: 0,
     ultimaAuditoriaEm: null,
     ultimaAuditoria: null,
@@ -148,6 +151,9 @@ function finalizarResumoPeriodo(resumo) {
     resumo.porTipo[tipo].custoRuptura = arredondar(
       resumo.porTipo[tipo].custoRuptura,
     );
+    resumo.porTipo[tipo].custoRupturaOperacional = arredondar(
+      resumo.porTipo[tipo].custoRupturaOperacional,
+    );
     resumo.porTipo[tipo].taxaConformidade = calcularTaxaTipo(
       tipo,
       resumo.porTipo[tipo],
@@ -169,6 +175,9 @@ function finalizarResumoPeriodo(resumo) {
   ).length;
   resumo.pontuacao = arredondar(resumo.pontuacao);
   resumo.custoRuptura = arredondar(resumo.custoRuptura);
+  resumo.custoRupturaOperacionalRuptura = arredondar(
+    resumo.custoRupturaOperacionalRuptura,
+  );
   resumo.taxaConformidade =
     denominador > 0 ? arredondar((numerador / denominador) * 100) : 0;
 
@@ -220,8 +229,12 @@ router.get(
       match: matchPeriodoBase,
     });
 
-    const [metricasPorTipo, auditoriasPorTipo, ultimasAuditorias] =
-      await Promise.all([
+    const [
+      metricasPorTipo,
+      auditoriasPorTipo,
+      ultimasAuditorias,
+      custosRupturaOperacional,
+    ] = await Promise.all([
         MetricaDiaria.aggregate([
           {
             $match: {
@@ -279,6 +292,23 @@ router.get(
                   status: "$status",
                 },
               },
+            },
+          },
+        ]),
+        AuditItem.aggregate([
+          {
+            $match: {
+              loja: { $in: lojaIds },
+              tipo: TIPOS_AUDITORIA.RUPTURA,
+              situacao: "Sem Presença e Com Estoque",
+              cancelada: { $ne: true },
+              data: { $gte: inicio, $lte: fim },
+            },
+          },
+          {
+            $group: {
+              _id: "$loja",
+              total: { $sum: { $ifNull: ["$custoRuptura", 0] } },
             },
           },
         ]),
@@ -340,6 +370,16 @@ router.get(
       ) {
         resumo.ultimaAuditoriaEm = linha.ultimaAuditoriaEm;
       }
+    }
+
+    for (const linha of custosRupturaOperacional) {
+      const lojaId = String(linha._id);
+      const resumo = resumosPorLoja.get(lojaId);
+      if (!resumo) continue;
+
+      const total = Number(linha.total || 0);
+      resumo.custoRupturaOperacionalRuptura += total;
+      resumo.porTipo[TIPOS_AUDITORIA.RUPTURA].custoRupturaOperacional += total;
     }
 
     const items = lojas.map((loja) => ({

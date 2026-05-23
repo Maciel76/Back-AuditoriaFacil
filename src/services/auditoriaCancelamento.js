@@ -4,6 +4,7 @@ import { AuditItem } from "../models/AuditItem.js";
 import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { MetricaDiaria } from "../models/MetricaDiaria.js";
+import { httpError } from "../utils/http.js";
 import { avaliarConquistas } from "./conquistasService.js";
 import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
 import { calcularMapaTotalLiderPodium } from "./podiumMetricas.js";
@@ -258,4 +259,59 @@ export async function cancelarAuditoria({
   await recomputarAcumuladosLoja(auditoria.loja);
 
   return auditoria;
+}
+
+export async function cancelarAuditoriaDoDia({
+  lojaId,
+  usuarioId,
+  tipo,
+  data,
+  motivo = "",
+}) {
+  const auditoriaExistente = await Auditoria.findOne({
+    loja: lojaId,
+    tipo,
+    data,
+  });
+  if (auditoriaExistente) {
+    if (auditoriaExistente.status !== "CANCELADA") {
+      throw httpError(
+        409,
+        "Já existe uma auditoria enviada para esta loja, tipo e data. Cancele pelo histórico de auditorias.",
+      );
+    }
+
+    return { auditoria: auditoriaExistente, criada: false };
+  }
+
+  const motivoFinal = motivo || "Cancelamento manual sem planilha";
+  const auditoria = await Auditoria.create({
+    loja: lojaId,
+    tipo,
+    data,
+    arquivoOriginal: "Cancelamento manual sem planilha",
+    enviadoPor: usuarioId,
+    totalItens: 0,
+    totalLidos: 0,
+    totalConformes: 0,
+    totalNaoConformes: 0,
+    taxaConformidade: 0,
+    pontuacao: 0,
+    custoRupturaTotal: 0,
+    situacoes: {},
+    topColaboradores: [],
+    status: "CANCELADA",
+    canceladaEm: new Date(),
+    canceladaPor: usuarioId,
+    motivoCancelamento: motivoFinal,
+  });
+
+  await zerarMetricasCanceladas({
+    auditoria,
+    usuarioId,
+    motivo: motivoFinal,
+  });
+  await recomputarAcumuladosLoja(auditoria.loja);
+
+  return { auditoria, criada: true };
 }

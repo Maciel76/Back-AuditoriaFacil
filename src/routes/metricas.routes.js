@@ -14,7 +14,7 @@ import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { ROLES } from "../models/Usuario.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
-import { classificar } from "../services/regras.js";
+import { classificar, REGRAS } from "../services/regras.js";
 import mongoose from "mongoose";
 
 const router = Router();
@@ -23,6 +23,11 @@ const SITUACOES_DASHBOARD_PRESENCA = Object.freeze({
   lidos: "Com Presença e com Estoque",
   naoLidos: "Sem Presença e Com Estoque",
 });
+const SITUACOES_LIDAS_RUPTURA = Object.freeze(
+  Object.entries(REGRAS[TIPOS_AUDITORIA.RUPTURA]?.situacoes || {})
+    .filter(([, regra]) => regra?.conta)
+    .map(([situacao]) => situacao),
+);
 
 function somarSituacaoMapa(situacao) {
   return {
@@ -2591,6 +2596,71 @@ function calcularPercentualRestante(percentualConclusao) {
     : Number(Math.max(0, 100 - Number(percentualConclusao || 0)).toFixed(2));
 }
 
+async function carregarCustoRupturaEvitadoPorColaborador({
+  escopoLojaId,
+  inicio,
+  fim,
+}) {
+  const match = {
+    ...FILTRO_ITENS_ATIVOS,
+    colaborador: { $ne: null },
+    tipo: TIPOS_AUDITORIA.RUPTURA,
+    data: { $gte: inicio, $lte: fim },
+    situacao: { $in: SITUACOES_LIDAS_RUPTURA },
+  };
+
+  if (escopoLojaId) {
+    match.loja = new mongoose.Types.ObjectId(escopoLojaId);
+  }
+
+  const rows = await AuditItem.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: "$colaborador",
+        custoRupturaEvitado: { $sum: { $ifNull: ["$custoRuptura", 0] } },
+      },
+    },
+  ]);
+
+  return new Map(
+    rows.map((row) => [
+      String(row._id),
+      Number(Number(row.custoRupturaEvitado || 0).toFixed(2)),
+    ]),
+  );
+}
+
+async function carregarCustoRupturaEvitadoPorLoja({ inicio, fim }) {
+  const rows = await AuditItem.aggregate([
+    {
+      $match: {
+        ...FILTRO_ITENS_ATIVOS,
+        tipo: TIPOS_AUDITORIA.RUPTURA,
+        data: { $gte: inicio, $lte: fim },
+        situacao: { $in: SITUACOES_LIDAS_RUPTURA },
+      },
+    },
+    {
+      $group: {
+        _id: "$loja",
+        custoRupturaEvitado: { $sum: { $ifNull: ["$custoRuptura", 0] } },
+      },
+    },
+  ]);
+
+  return new Map(
+    rows.map((row) => [
+      String(row._id),
+      Number(Number(row.custoRupturaEvitado || 0).toFixed(2)),
+    ]),
+  );
+}
+
+function obterCustoRupturaEvitado(mapa, colaboradorId) {
+  return Number(Number(mapa.get(String(colaboradorId)) || 0).toFixed(2));
+}
+
 async function executarRankingColaboradoresRupturaContinuada({
   escopoLojaId,
   inicio,
@@ -2618,45 +2688,47 @@ async function executarRankingColaboradoresRupturaContinuada({
     },
   };
 
-  const [rupturas, presencas] = await Promise.all([
-    MetricaDiaria.aggregate([
-      { $match: matchRuptura },
-      {
-        $group: {
-          _id: {
-            colaborador: "$colaborador",
-            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+  const [rupturas, presencas, custoRupturaEvitadoPorColaborador] =
+    await Promise.all([
+      MetricaDiaria.aggregate([
+        { $match: matchRuptura },
+        {
+          $group: {
+            _id: {
+              colaborador: "$colaborador",
+              dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+            },
+            totalLidos: { $sum: "$totalLidos" },
+            totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
+            totalConformes: { $sum: "$totalConformes" },
+            totalNaoConformes: { $sum: "$totalNaoConformes" },
+            pontuacao: { $sum: "$pontuacao" },
+            custoRuptura: { $sum: "$custoRuptura" },
+            semPresencaComEstoque: somarSituacaoMapa(
+              SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+            ),
           },
-          totalLidos: { $sum: "$totalLidos" },
-          totalItensAuditaveis: { $sum: "$totalItensAuditaveis" },
-          totalConformes: { $sum: "$totalConformes" },
-          totalNaoConformes: { $sum: "$totalNaoConformes" },
-          pontuacao: { $sum: "$pontuacao" },
-          custoRuptura: { $sum: "$custoRuptura" },
-          semPresencaComEstoque: somarSituacaoMapa(
-            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
-          ),
         },
-      },
-    ]),
-    MetricaDiaria.aggregate([
-      { $match: matchPresenca },
-      {
-        $group: {
-          _id: {
-            colaborador: "$colaborador",
-            dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+      ]),
+      MetricaDiaria.aggregate([
+        { $match: matchPresenca },
+        {
+          $group: {
+            _id: {
+              colaborador: "$colaborador",
+              dia: { $dateToString: { format: "%Y-%m-%d", date: "$data" } },
+            },
+            presencaComEstoque: somarSituacaoMapa(
+              SITUACOES_DASHBOARD_PRESENCA.lidos,
+            ),
+            semPresencaComEstoque: somarSituacaoMapa(
+              SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+            ),
           },
-          presencaComEstoque: somarSituacaoMapa(
-            SITUACOES_DASHBOARD_PRESENCA.lidos,
-          ),
-          semPresencaComEstoque: somarSituacaoMapa(
-            SITUACOES_DASHBOARD_PRESENCA.naoLidos,
-          ),
         },
-      },
-    ]),
-  ]);
+      ]),
+      carregarCustoRupturaEvitadoPorColaborador({ escopoLojaId, inicio, fim }),
+    ]);
 
   const presencaPorColaboradorDia = new Map(
     presencas.map((linha) => [
@@ -2751,6 +2823,10 @@ async function executarRankingColaboradoresRupturaContinuada({
         pontuacao: Number(item.pontuacao.toFixed(2)),
         taxaConformidade,
         custoRuptura: Number(item.custoRuptura.toFixed(2)),
+        custoRupturaEvitado: obterCustoRupturaEvitado(
+          custoRupturaEvitadoPorColaborador,
+          item._id,
+        ),
         percentualConclusao,
         percentualRestante: calcularPercentualRestante(percentualConclusao),
         totalAuditorias: item.totalAuditorias,
@@ -2774,7 +2850,7 @@ async function executarRankingColaboradoresRupturaContinuada({
 async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
   const referenciaPresenca = intervaloPresencaReferencia(inicio, fim);
 
-  const [rupturas, presencas] = await Promise.all([
+  const [rupturas, presencas, custoRupturaEvitadoPorLoja] = await Promise.all([
     MetricaDiaria.aggregate([
       {
         $match: {
@@ -2828,6 +2904,7 @@ async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
         },
       },
     ]),
+    carregarCustoRupturaEvitadoPorLoja({ inicio, fim }),
   ]);
 
   const presencaPorLojaDia = new Map(
@@ -2927,6 +3004,10 @@ async function executarRankingLojasRupturaContinuada({ inicio, fim }) {
         pontuacao: Number(item.pontuacao.toFixed(2)),
         taxaConformidade,
         custoRuptura: Number(item.custoRuptura.toFixed(2)),
+        custoRupturaEvitado: obterCustoRupturaEvitado(
+          custoRupturaEvitadoPorLoja,
+          item._id,
+        ),
         percentualConclusao,
         percentualRestante: calcularPercentualRestante(percentualConclusao),
         totalAuditorias: item.totalAuditorias,
@@ -2979,7 +3060,8 @@ async function executarRankingColaboradores({
     data: { $gte: inicio, $lte: fim },
   };
 
-  const ranking = await MetricaDiaria.aggregate([
+  const [rankingBase, custoRupturaEvitadoPorColaborador] = await Promise.all([
+    MetricaDiaria.aggregate([
       { $match: match },
       {
         $group: {
@@ -3099,9 +3181,25 @@ async function executarRankingColaboradores({
           conquistas: "$colaborador.conquistas",
         },
       },
-    ]);
+    ]),
+    tipo === TIPOS_AUDITORIA.ETIQUETA || tipo === TIPOS_AUDITORIA.PRESENCA
+      ? Promise.resolve(new Map())
+      : carregarCustoRupturaEvitadoPorColaborador({
+          escopoLojaId,
+          inicio,
+          fim,
+        }),
+  ]);
 
-    return { inicio, fim, items: ranking };
+  const ranking = rankingBase.map((item) => ({
+    ...item,
+    custoRupturaEvitado: obterCustoRupturaEvitado(
+      custoRupturaEvitadoPorColaborador,
+      item._id,
+    ),
+  }));
+
+  return { inicio, fim, items: ranking };
 }
 
 router.get(
@@ -3299,14 +3397,30 @@ router.get(
       },
     ]);
 
+    const custoRupturaEvitadoPorLoja =
+      tipoFilter === TIPOS_AUDITORIA.ETIQUETA ||
+      tipoFilter === TIPOS_AUDITORIA.PRESENCA
+        ? new Map()
+        : await carregarCustoRupturaEvitadoPorLoja({ inicio, fim });
+
+    const rankingComCustoEvitado = ranking.map((item) => ({
+      ...item,
+      custoRupturaEvitado: obterCustoRupturaEvitado(
+        custoRupturaEvitadoPorLoja,
+        item._id,
+      ),
+    }));
+
     // SUPER_ADMIN e STORE_ADMIN enxergam ranking geral de lojas.
     // Perfis fora do escopo administrativo continuam restritos à própria loja.
-    let items = ranking;
+    let items = rankingComCustoEvitado;
     if (
       ![ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN].includes(req.usuario.role) &&
       req.usuario.loja
     ) {
-      items = ranking.filter((r) => String(r._id) === String(req.usuario.loja));
+      items = rankingComCustoEvitado.filter(
+        (r) => String(r._id) === String(req.usuario.loja),
+      );
     }
     res.json({ periodo: { inicio, fim }, items });
   }),
