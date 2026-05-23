@@ -1074,6 +1074,17 @@ async function montarPerfilColaborador({
   return { colaborador: colab, periodo: { inicio, fim }, porTipo, serie };
 }
 
+function calcTaxaPerfil(tipoAtual, row) {
+  if (tipoAtual === "ETIQUETA") {
+    return row.totalItensAuditaveis > 0
+      ? Number(((row.totalLidos / row.totalItensAuditaveis) * 100).toFixed(2))
+      : 0;
+  }
+  return row.totalLidos > 0
+    ? Number(((row.totalConformes / row.totalLidos) * 100).toFixed(2))
+    : 0;
+}
+
 function calcularTaxaConformidadeColaborador(colaborador) {
   const totalLidos = Number(colaborador?.totalItensLidos || 0);
   const totalConformes = Number(colaborador?.totalItensConformes || 0);
@@ -1569,17 +1580,6 @@ async function montarPerfilLoja({
     ...matchMetricasBase,
     cancelada: { $ne: true },
     data: { $gte: inicio, $lte: fim },
-  };
-
-  const calcTaxaPerfil = (tipoAtual, row) => {
-    if (tipoAtual === "ETIQUETA") {
-      return row.totalItensAuditaveis > 0
-        ? Number(((row.totalLidos / row.totalItensAuditaveis) * 100).toFixed(2))
-        : 0;
-    }
-    return row.totalLidos > 0
-      ? Number(((row.totalConformes / row.totalLidos) * 100).toFixed(2))
-      : 0;
   };
 
   const porTipo = await MetricaDiaria.aggregate([
