@@ -23,6 +23,17 @@ const SITUACOES_DASHBOARD_PRESENCA = Object.freeze({
   lidos: "Com Presença e com Estoque",
   naoLidos: "Sem Presença e Com Estoque",
 });
+const SITUACOES_FILTRO_RELATORIO_CORREDOR = Object.freeze({
+  [TIPOS_AUDITORIA.ETIQUETA]: Object.freeze({
+    naoLidos: "Não lidos com estoque",
+  }),
+  [TIPOS_AUDITORIA.PRESENCA]: Object.freeze({
+    naoLidos: SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+  }),
+  [TIPOS_AUDITORIA.RUPTURA]: Object.freeze({
+    naoLidos: SITUACOES_DASHBOARD_PRESENCA.naoLidos,
+  }),
+});
 const SITUACOES_LIDAS_RUPTURA = Object.freeze(
   Object.entries(REGRAS[TIPOS_AUDITORIA.RUPTURA]?.situacoes || {})
     .filter(([, regra]) => regra?.conta)
@@ -666,7 +677,19 @@ function atualizarMetricasRelatorioCorredor(resumo, item, cls) {
   if (cls.conta && cls.conforme === false) resumo.naoConformes += 1;
 }
 
-function finalizarResumoRelatorioCorredor(resumo) {
+function calcularTaxaResumoRelatorioCorredor(resumo, tipoSelecionado = "") {
+  const tiposResumo = Array.from(resumo?.tipos || []).filter(Boolean);
+  const tipoBase =
+    tipoSelecionado || (tiposResumo.length === 1 ? tiposResumo[0] : "");
+
+  return calcularTaxaConformidadeCorredor(tipoBase, {
+    totalItensAuditaveis: Number(resumo?.totalItens || 0),
+    totalLidos: Number(resumo?.totalLidos || 0),
+    totalConformes: Number(resumo?.conformes || 0),
+  });
+}
+
+function finalizarResumoRelatorioCorredor(resumo, tipoSelecionado = "") {
   const participantes = Array.from(resumo.participantesMap.values())
     .filter((participante) => participante.totalLidos > 0)
     .sort((a, b) => {
@@ -685,10 +708,10 @@ function finalizarResumoRelatorioCorredor(resumo) {
       naoConformes: participante.naoConformes,
     }));
 
-  const taxaConformidade =
-    resumo.totalItens > 0
-      ? Number(((resumo.totalLidos / resumo.totalItens) * 100).toFixed(2))
-      : 0;
+  const taxaConformidade = calcularTaxaResumoRelatorioCorredor(
+    resumo,
+    tipoSelecionado,
+  );
 
   return {
     nome: resumo.local,
@@ -840,7 +863,7 @@ async function montarRelatorioCorredores({
   }
 
   const itemsResumo = Array.from(corredoresMap.values())
-    .map((corredor) => finalizarResumoRelatorioCorredor(corredor))
+    .map((corredor) => finalizarResumoRelatorioCorredor(corredor, tipo))
     .filter((corredor) => corredor.totalItens > 0)
     .sort(
       (a, b) =>
@@ -911,6 +934,19 @@ function serializarProdutoRelatorioCorredor(item, cls) {
   };
 }
 
+function resolverFiltroLeituraRelatorioCorredor(item, cls) {
+  if (cls.conforme === null) return "ignorar";
+
+  const situacaoNaoLida =
+    SITUACOES_FILTRO_RELATORIO_CORREDOR[item?.tipo]?.naoLidos || null;
+
+  if (situacaoNaoLida) {
+    return item?.situacao === situacaoNaoLida ? "nao-lido" : "lido";
+  }
+
+  return cls.conta ? "lido" : "nao-lido";
+}
+
 async function montarDetalheRelatorioCorredor({
   escopoLojaId,
   periodo,
@@ -934,13 +970,19 @@ async function montarDetalheRelatorioCorredor({
 
   for (const item of items) {
     const cls = classificar(item.tipo, item.situacao);
-    if (cls.conforme === null) {
+    const filtroLeitura = resolverFiltroLeituraRelatorioCorredor(item, cls);
+
+    if (filtroLeitura === "ignorar") {
       semEstoqueIgnorados += 1;
       continue;
     }
 
-    const produto = serializarProdutoRelatorioCorredor(item, cls);
-    if (cls.conta) itensLidos.push(produto);
+    const produto = {
+      ...serializarProdutoRelatorioCorredor(item, cls),
+      foiLido: filtroLeitura === "lido",
+    };
+
+    if (filtroLeitura === "lido") itensLidos.push(produto);
     else itensNaoLidos.push(produto);
   }
 
@@ -1176,6 +1218,9 @@ async function montarCorredoresAuditoria({ auditoria, colaboradorId, itens }) {
   const corredoresMap = new Map();
   const colaboradoresIds = new Set();
 
+  // Para PRESENCA, mapear corredores com "Sem Presença e Com Estoque" mesmo sem leitura
+  const corredoresSemPresenca = new Set();
+
   for (const item of itens) {
     const local = normalizarLocalCorredor(item.local);
     const estatisticas = estatisticasLinhaAuditoria(auditoria.tipo, item);
@@ -1191,6 +1236,14 @@ async function montarCorredoresAuditoria({ auditoria, colaboradorId, itens }) {
       ultimoMovimentoMeu: null,
       participantesMap: new Map(),
     };
+
+    // Marcar corredores com "Sem Presença e Com Estoque" para PRESENCA
+    if (
+      auditoria.tipo === "PRESENCA" &&
+      item.situacao === "Sem Presença e Com Estoque"
+    ) {
+      corredoresSemPresenca.add(local);
+    }
 
     corredorAtual.totalItens += estatisticas.totalItens;
     corredorAtual.totalItensAuditaveis += estatisticas.totalItensAuditaveis;
@@ -1241,6 +1294,16 @@ async function montarCorredoresAuditoria({ auditoria, colaboradorId, itens }) {
     corredoresMap.set(local, corredorAtual);
 
     if (participanteId) colaboradoresIds.add(participanteId);
+  }
+
+  // Para PRESENCA, marcar como meuCorredor se houver "Sem Presença e Com Estoque" mesmo sem leitura
+  if (auditoria.tipo === "PRESENCA") {
+    for (const local of corredoresSemPresenca) {
+      const corredor = corredoresMap.get(local);
+      if (corredor && !corredor.meuCorredor) {
+        corredor.meuCorredor = true;
+      }
+    }
   }
 
   const colaboradores = colaboradoresIds.size
@@ -2035,8 +2098,8 @@ router.get(
     });
     const itemsOrdenados = [...items].sort(
       (a, b) =>
-        (Number(b?.totalLidos || 0) - Number(a?.totalLidos || 0)) ||
-        (Number(b?.pontuacao || 0) - Number(a?.pontuacao || 0)) ||
+        Number(b?.totalLidos || 0) - Number(a?.totalLidos || 0) ||
+        Number(b?.pontuacao || 0) - Number(a?.pontuacao || 0) ||
         String(a?.nome || "").localeCompare(String(b?.nome || ""), "pt-BR"),
     );
 
