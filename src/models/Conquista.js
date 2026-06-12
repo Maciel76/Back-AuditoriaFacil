@@ -17,6 +17,8 @@ export const TIERS = [
   "lendario",
   "diamante",
   "mitico",
+  "suprema",
+  "transcendente",
 ];
 
 export const TIER_INFO = {
@@ -26,6 +28,8 @@ export const TIER_INFO = {
   lendario: { ordem: 4, label: "Lendário", cor: "#f59e0b" },
   diamante: { ordem: 5, label: "Diamante", cor: "#06b6d4" },
   mitico: { ordem: 6, label: "Mítico", cor: "#ef4444" },
+  suprema: { ordem: 7, label: "Suprema", cor: "#fbbf24" },
+  transcendente: { ordem: 8, label: "Transcendente", cor: "#ec4899" },
 };
 
 export const METRICAS_SUPORTADAS = [

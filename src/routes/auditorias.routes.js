@@ -23,6 +23,8 @@ import { REGRAS } from "../services/regras.js";
 const router = Router();
 router.use(autenticar);
 
+const AUDITORIA_ID_REGEX = /^[0-9a-fA-F]{24}$/;
+
 const uploadJobs = new Map();
 const JOB_TTL_MS = 30 * 60 * 1000;
 
@@ -55,6 +57,14 @@ function normalizarDataDia(valor) {
   }
 
   return data;
+}
+
+function normalizarAuditoriaId(valor) {
+  const auditoriaId = String(valor || "").trim();
+  if (!AUDITORIA_ID_REGEX.test(auditoriaId)) {
+    throw httpError(404, "Auditoria não encontrada");
+  }
+  return auditoriaId;
 }
 
 router.get("/regras", (_req, res) => res.json(REGRAS));
@@ -214,12 +224,25 @@ router.post(
 );
 
 router.get(
+  "/calendario",
+  escopoLoja,
+  exigirEscopoLoja,
+  asyncHandler(async (_req, _res) => {
+    throw httpError(
+      404,
+      "Endpoint inexistente. Use a rota de frontend /auditorias/calendario.",
+    );
+  }),
+);
+
+router.get(
   "/:id",
   escopoLoja,
   exigirEscopoLoja,
   asyncHandler(async (req, res) => {
+    const auditoriaId = normalizarAuditoriaId(req.params.id);
     const auditoria = await Auditoria.findOne({
-      _id: req.params.id,
+      _id: auditoriaId,
       loja: req.escopoLojaId,
     }).lean();
     if (!auditoria) throw httpError(404, "Auditoria não encontrada");
@@ -260,9 +283,10 @@ router.get(
   escopoLoja,
   exigirEscopoLoja,
   asyncHandler(async (req, res) => {
+    const auditoriaId = normalizarAuditoriaId(req.params.id);
     const { situacao, conforme, page = 1, limit = 100, q } = req.query;
     const auditoria = await Auditoria.findOne({
-      _id: req.params.id,
+      _id: auditoriaId,
       loja: req.escopoLojaId,
     }).lean();
     if (!auditoria) throw httpError(404, "Auditoria não encontrada");
@@ -291,8 +315,9 @@ router.post(
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
+    const auditoriaId = normalizarAuditoriaId(req.params.id);
     const auditoria = await cancelarAuditoria({
-      auditoriaId: req.params.id,
+      auditoriaId,
       lojaId: req.escopoLojaId,
       usuarioId: req.usuario.id,
       motivo: String(req.body?.motivo || "").trim(),
@@ -313,6 +338,7 @@ router.patch(
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
+    const auditoriaId = normalizarAuditoriaId(req.params.id);
     const novoTipo = String(req.body?.tipo || "")
       .toUpperCase()
       .trim();
@@ -321,7 +347,7 @@ router.patch(
     }
     try {
       const auditoria = await reclassificarAuditoria({
-        auditoriaId: req.params.id,
+        auditoriaId,
         lojaId: req.escopoLojaId,
         novoTipo,
         usuarioId: req.usuario.id,
@@ -345,8 +371,9 @@ router.delete(
   exigirEscopoLoja,
   exigirRole(ROLES.SUPER_ADMIN, ROLES.STORE_ADMIN),
   asyncHandler(async (req, res) => {
+    const auditoriaId = normalizarAuditoriaId(req.params.id);
     const auditoria = await Auditoria.findOne({
-      _id: req.params.id,
+      _id: auditoriaId,
       loja: req.escopoLojaId,
     });
     if (!auditoria) throw httpError(404, "Auditoria não encontrada");
