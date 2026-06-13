@@ -246,4 +246,39 @@ router.post(
   }),
 );
 
+/**
+ * Reset de senha do colaborador no portal (após 3 tentativas erradas).
+ * O colaborador confirma a matrícula e define uma nova senha.
+ */
+router.post(
+  "/portal/reset-senha",
+  asyncHandler(async (req, res) => {
+    const { matricula, lojaSlug, novaSenha } = z
+      .object({
+        matricula: z.string().min(1),
+        lojaSlug: z.string().min(1),
+        novaSenha: z.string().min(6),
+      })
+      .parse(req.body);
+    const loja = await Loja.findOne({ slug: lojaSlug });
+    if (!loja) throw httpError(404, "Loja não encontrada");
+    const colab = await Colaborador.findOne({
+      loja: loja._id,
+      codigoExterno: matricula,
+      ativo: true,
+    }).select("+senhaHash");
+    if (!colab) throw httpError(404, "Matrícula não encontrada");
+    if (colab.primeiroAcesso || !colab.senhaHash)
+      throw httpError(400, "Esta conta ainda não possui senha. Use a opção de primeiro acesso.");
+    colab.senhaHash = await Colaborador.hashSenha(novaSenha);
+    await colab.save();
+    const token = assinarToken({
+      sub: colab.id,
+      tipo: "colaborador",
+      loja: loja.id,
+    });
+    res.json({ token, colaborador: colab, loja });
+  }),
+);
+
 export default router;
