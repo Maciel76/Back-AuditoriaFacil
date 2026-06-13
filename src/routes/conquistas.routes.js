@@ -110,7 +110,7 @@ const baseSchema = z.object({
     .regex(/^[A-Z0-9_]+$/, "Use apenas A-Z, 0-9 e _"),
   nome: z.string().min(2).max(120),
   descricao: z.string().max(400).optional().default(""),
-  icone: z.string().max(8).optional().default("🏆"),
+  icone: z.string().max(500).optional().default("🏆"),
   cor: z.string().max(32).optional().default(""),
   categoria: z.enum(CATEGORIAS),
   metricaBase: z.enum(METRICAS_SUPORTADAS),
