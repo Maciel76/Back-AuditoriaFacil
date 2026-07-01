@@ -1,11 +1,12 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import { TIERS } from "./Conquista.js";
 
 const HistoricoDesbloqueioSchema = new mongoose.Schema(
   {
     nivel: {
       type: String,
-      enum: ["comum", "raro", "epico", "lendario", "diamante", "mitico"],
+      enum: TIERS,
       required: true,
     },
     desbloqueadoEm: { type: Date, required: true },
@@ -75,15 +76,7 @@ const ColaboradorSchema = new mongoose.Schema(
         codigo: { type: String, required: true },
         tierAtual: {
           type: String,
-          enum: [
-            "comum",
-            "raro",
-            "epico",
-            "lendario",
-            "diamante",
-            "mitico",
-            null,
-          ],
+          enum: [...TIERS, null],
           default: null,
         },
         tiersDesbloqueados: { type: [String], default: [] },
