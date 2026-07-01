@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Auditoria, TIPOS_AUDITORIA } from "../models/Auditoria.js";
 import { AuditItem } from "../models/AuditItem.js";
 import { Colaborador } from "../models/Colaborador.js";
+import { Loja } from "../models/Loja.js";
+import { Usuario } from "../models/Usuario.js";
 import { upload } from "../middlewares/upload.js";
 import {
   autenticar,
@@ -246,6 +248,28 @@ router.get(
       loja: req.escopoLojaId,
     }).lean();
     if (!auditoria) throw httpError(404, "Auditoria não encontrada");
+
+    // Popula nomes de usuários (enviadoPor, canceladaPor)
+    const usuarioIds = [
+      auditoria.enviadoPor,
+      auditoria.canceladaPor,
+    ].filter(Boolean);
+    if (usuarioIds.length) {
+      const usuarios = await Usuario.find({ _id: { $in: usuarioIds } })
+        .select("_id nome")
+        .lean();
+      const mapaUsuarios = new Map(
+        usuarios.map((u) => [String(u._id), u.nome]),
+      );
+      auditoria.enviadoPorNome =
+        mapaUsuarios.get(String(auditoria.enviadoPor || "")) || null;
+      auditoria.canceladaPorNome =
+        mapaUsuarios.get(String(auditoria.canceladaPor || "")) || null;
+    }
+
+    // Popula nome da loja
+    const loja = await Loja.findById(auditoria.loja).select("nome").lean();
+    if (loja) auditoria.lojaNome = loja.nome;
 
     if (auditoria.topColaboradores?.length) {
       const colaboradorIds = auditoria.topColaboradores
