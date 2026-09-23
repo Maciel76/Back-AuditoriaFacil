@@ -53,6 +53,10 @@ const ColaboradorSchema = new mongoose.Schema(
 
     // Estatísticas agregadas (atualizadas a cada upload)
     pontuacao: { type: Number, default: 0 },
+    // Separação explícita para que bônus de conquistas possam ser recalculados
+    // sem alterar os pontos originados pelas auditorias.
+    pontuacaoAuditorias: { type: Number },
+    xpConquistas: { type: Number, default: 0 },
     nivel: { type: Number, default: 1 },
     totalAuditorias: { type: Number, default: 0 },
     totalItensLidos: { type: Number, default: 0 },

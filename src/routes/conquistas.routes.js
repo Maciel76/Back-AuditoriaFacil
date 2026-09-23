@@ -17,6 +17,7 @@ import { asyncHandler, httpError } from "../utils/http.js";
 import { verificarToken } from "../utils/jwt.js";
 import {
   invalidarCacheConquistas,
+  recalcularConquistasColaboradores,
   resolverConquistasPortal,
 } from "../services/conquistasService.js";
 
@@ -102,6 +103,23 @@ const tierSchema = z.object({
   imagemUrl: z.string().trim().max(500).optional().default(""),
 });
 
+const tiersSchema = z
+  .array(tierSchema)
+  .min(1)
+  .superRefine((tiers, ctx) => {
+    const usados = new Set();
+    tiers.forEach((tier, index) => {
+      if (usados.has(tier.nivel)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "nivel"],
+          message: `O tier ${tier.nivel} está duplicado`,
+        });
+      }
+      usados.add(tier.nivel);
+    });
+  });
+
 const baseSchema = z.object({
   codigo: z
     .string()
@@ -116,7 +134,7 @@ const baseSchema = z.object({
   metricaBase: z.enum(METRICAS_SUPORTADAS),
   tipoAuditoria: z.enum(TIPOS_AUDITORIA_CONQUISTA).nullable().optional(),
   recorrente: z.boolean().optional().default(false),
-  tiers: z.array(tierSchema).min(1),
+  tiers: tiersSchema,
   ativa: z.boolean().optional().default(true),
   ordem: z.number().int().optional().default(100),
 });
@@ -174,10 +192,18 @@ router.delete(
 );
 
 router.post(
+  "/recalcular",
+  asyncHandler(async (_req, res) => {
+    const resumo = await recalcularConquistasColaboradores();
+    res.json({ ok: true, resumo });
+  }),
+);
+
+router.post(
   "/:id/recalcular",
   asyncHandler(async (_req, res) => {
-    invalidarCacheConquistas();
-    res.json({ ok: true });
+    const resumo = await recalcularConquistasColaboradores();
+    res.json({ ok: true, resumo });
   }),
 );
 

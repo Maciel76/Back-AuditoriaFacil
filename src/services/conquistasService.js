@@ -1,4 +1,6 @@
 import { Conquista, TIER_INFO } from "../models/Conquista.js";
+import { Colaborador } from "../models/Colaborador.js";
+import { MetricaDiaria } from "../models/MetricaDiaria.js";
 import { normalizarMetricasPorTipo } from "./colaboradorMetricas.js";
 
 let cacheConquistas = null;
@@ -74,30 +76,129 @@ function ordenarHistoricoPorTier(a, b) {
   return (TIER_INFO[a.nivel]?.ordem || 0) - (TIER_INFO[b.nivel]?.ordem || 0);
 }
 
+function arredondarXp(valor) {
+  return Number(Number(valor || 0).toFixed(2));
+}
+
+function calcularNivel(pontuacao) {
+  return Math.max(1, Math.floor(arredondarXp(pontuacao) / 500) + 1);
+}
+
+function bonusRegistrado(colab, definicoes) {
+  const definicoesPorCodigo = new Map(definicoes.map((d) => [d.codigo, d]));
+
+  return arredondarXp(
+    (colab.conquistas || []).reduce((total, estado) => {
+      const historico = estado.historicoDesbloqueios || [];
+      if (historico.length) {
+        return (
+          total +
+          historico.reduce((soma, item) => soma + Number(item.xpBonus || 0), 0)
+        );
+      }
+
+      // Compatibilidade com registros criados antes do histórico por tier.
+      const definicao = definicoesPorCodigo.get(estado.codigo);
+      const desbloqueados = new Set(estado.tiersDesbloqueados || []);
+      return (
+        total +
+        (definicao?.tiers || []).reduce(
+          (soma, tier) =>
+            soma + (desbloqueados.has(tier.nivel) ? Number(tier.xpBonus || 0) : 0),
+          0,
+        )
+      );
+    }, 0),
+  );
+}
+
+function calcularEstados(colab, definicoes, pontuacaoBase) {
+  let pontuacaoProjetada = arredondarXp(pontuacaoBase);
+  let estados = [];
+  const limiteTentativas =
+    definicoes.reduce((total, def) => total + (def.tiers?.length || 0), 0) + 2;
+
+  // Pontuação e nível podem ser métricas de uma conquista. Repetimos até o
+  // ponto fixo para que bônus recém-obtidos possam desbloquear outro tier.
+  for (let tentativa = 0; tentativa < limiteTentativas; tentativa += 1) {
+    const contexto = {
+      totalItensLidos: colab.totalItensLidos,
+      totalItensConformes: colab.totalItensConformes,
+      totalAuditorias: colab.totalAuditorias,
+      totalItensParticipacaoLoja: colab.totalItensParticipacaoLoja,
+      totalLiderPodium: colab.totalLiderPodium,
+      metricasPorTipo: colab.metricasPorTipo,
+      pontuacao: pontuacaoProjetada,
+      nivel: calcularNivel(pontuacaoProjetada),
+    };
+    estados = definicoes.map((def) => {
+      const tiersOrdenados = [...(def.tiers || [])].sort(
+        (a, b) => a.meta - b.meta,
+      );
+      const valor = lerMetrica(contexto, def.metricaBase, def.tipoAuditoria);
+      return {
+        def,
+        tiersOrdenados,
+        valor,
+        ...tierMaisAlto(tiersOrdenados, valor),
+      };
+    });
+
+    const bonus = estados.reduce(
+      (total, estado) =>
+        total +
+        estado.tiersOrdenados.reduce(
+          (soma, tier) =>
+            soma +
+            (estado.desbloqueados.includes(tier.nivel)
+              ? Number(tier.xpBonus || 0)
+              : 0),
+          0,
+        ),
+      0,
+    );
+    const proximaPontuacao = arredondarXp(pontuacaoBase + bonus);
+    if (proximaPontuacao === pontuacaoProjetada) {
+      return { estados, bonusXp: arredondarXp(bonus) };
+    }
+    pontuacaoProjetada = proximaPontuacao;
+  }
+
+  throw new Error(
+    "Não foi possível estabilizar conquistas baseadas em pontuação/nível. Revise as metas e bônus.",
+  );
+}
+
 /**
  * Avalia todas as conquistas ativas para um colaborador, atualizando
  * `colab.conquistas` in place. Retorna um array de eventos com as
  * conquistas/tiers recém-desbloqueados (para exibir notificações ou
  * conceder XP bônus). Não chama `colab.save()`.
  */
-export async function avaliarConquistas(colab) {
+export async function avaliarConquistas(colab, opcoes = {}) {
   const definicoes = await carregarConquistasAtivas();
-  if (!definicoes.length) return [];
+  const bonusAnterior = bonusRegistrado(colab, definicoes);
+  const pontuacaoBase = arredondarXp(
+    opcoes.pontuacaoBase ?? Math.max(0, Number(colab.pontuacao || 0) - bonusAnterior),
+  );
+
+  if (!definicoes.length) {
+    colab.conquistas = [];
+    colab.pontuacaoAuditorias = pontuacaoBase;
+    colab.xpConquistas = 0;
+    colab.pontuacao = pontuacaoBase;
+    colab.nivel = calcularNivel(pontuacaoBase);
+    return [];
+  }
 
   const eventos = [];
   const mapaAtual = new Map();
   for (const c of colab.conquistas || []) mapaAtual.set(c.codigo, c);
 
   const novaLista = [];
-  let bonusXp = 0;
-  for (const def of definicoes) {
-    const tiersOrdenados = [...(def.tiers || [])].sort(
-      (a, b) => a.meta - b.meta,
-    );
+  const { estados, bonusXp } = calcularEstados(colab, definicoes, pontuacaoBase);
+  for (const { def, tiersOrdenados, valor, alcancado, desbloqueados } of estados) {
     if (!tiersOrdenados.length) continue;
-
-    const valor = lerMetrica(colab, def.metricaBase, def.tipoAuditoria);
-    const { alcancado, desbloqueados } = tierMaisAlto(tiersOrdenados, valor);
     const agora = new Date();
 
     const atual = mapaAtual.get(def.codigo);
@@ -110,7 +211,6 @@ export async function avaliarConquistas(colab) {
     for (const nivel of novosTiers) {
       const tierDef = tiersOrdenados.find((t) => t.nivel === nivel);
       if (!tierDef) continue;
-      bonusXp += tierDef.xpBonus || 0;
       historicoPorNivel.set(nivel, {
         nivel,
         desbloqueadoEm: agora,
@@ -139,9 +239,10 @@ export async function avaliarConquistas(colab) {
           nivel,
           desbloqueadoEm:
             historico?.desbloqueadoEm || atual?.desbloqueadaEm || agora,
-          meta: historico?.meta ?? tierDef?.meta ?? 0,
-          xpBonus: historico?.xpBonus ?? tierDef?.xpBonus ?? 0,
-          titulo: historico?.titulo || tierDef?.titulo || "",
+          // Meta, XP e título devem refletir a definição atual após uma edição.
+          meta: tierDef?.meta ?? 0,
+          xpBonus: tierDef?.xpBonus ?? 0,
+          titulo: tierDef?.titulo || "",
         };
       })
       .sort(ordenarHistoricoPorTier);
@@ -162,11 +263,70 @@ export async function avaliarConquistas(colab) {
 
   colab.conquistas = novaLista;
 
-  if (bonusXp > 0) {
-    colab.pontuacao = Number(((colab.pontuacao || 0) + bonusXp).toFixed(2));
-  }
+  colab.pontuacaoAuditorias = pontuacaoBase;
+  colab.xpConquistas = bonusXp;
+  colab.pontuacao = arredondarXp(pontuacaoBase + bonusXp);
+  colab.nivel = calcularNivel(colab.pontuacao);
 
   return eventos;
+}
+
+/**
+ * Reavalia todos os colaboradores usando MetricaDiaria como fonte definitiva
+ * dos pontos de auditoria. É seguro executar repetidas vezes: o XP final é
+ * substituído, nunca somado sobre o resultado anterior.
+ */
+export async function recalcularConquistasColaboradores() {
+  invalidarCacheConquistas();
+  const pontosPorColaborador = await MetricaDiaria.aggregate([
+    {
+      $match: {
+        colaborador: { $ne: null },
+        cancelada: { $ne: true },
+      },
+    },
+    {
+      $group: {
+        _id: "$colaborador",
+        pontuacaoAuditorias: { $sum: { $ifNull: ["$pontuacao", 0] } },
+      },
+    },
+  ]);
+  const mapaPontos = new Map(
+    pontosPorColaborador.map((item) => [
+      String(item._id),
+      arredondarXp(item.pontuacaoAuditorias),
+    ]),
+  );
+
+  const resumo = {
+    colaboradores: 0,
+    alterados: 0,
+    xpAntes: 0,
+    xpDepois: 0,
+  };
+
+  const cursor = Colaborador.find({}).cursor();
+  for await (const colaborador of cursor) {
+    const antes = arredondarXp(colaborador.pontuacao);
+    const pontuacaoBase = mapaPontos.get(String(colaborador._id)) || 0;
+    await avaliarConquistas(colaborador, { pontuacaoBase });
+    await colaborador.save();
+
+    resumo.colaboradores += 1;
+    resumo.xpAntes = arredondarXp(resumo.xpAntes + antes);
+    resumo.xpDepois = arredondarXp(
+      resumo.xpDepois + Number(colaborador.pontuacao || 0),
+    );
+    if (antes !== arredondarXp(colaborador.pontuacao)) {
+      resumo.alterados += 1;
+    }
+  }
+
+  return {
+    ...resumo,
+    diferencaXp: arredondarXp(resumo.xpDepois - resumo.xpAntes),
+  };
 }
 
 /**
