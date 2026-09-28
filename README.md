@@ -157,7 +157,51 @@ GET    /api/metricas/ranking/lojas
 GET    /api/metricas/colaboradores/:id/perfil
 GET    /api/metricas/relatorios/situacoes
 GET    /api/metricas/relatorios/setores
+
+GET    /api/whatsapp/conexao                status + QR + configuracao (loja)
+POST   /api/whatsapp/conexao/conectar       inicia o pareamento (body: novoPareamento?)
+POST   /api/whatsapp/conexao/desconectar    fecha o socket, mantem o pareamento
+POST   /api/whatsapp/conexao/desvincular    remove o aparelho e apaga a sessao
+GET    /api/whatsapp/grupos                 grupos ja sincronizados
+POST   /api/whatsapp/grupos/sincronizar     rele os grupos no numero conectado
+PUT    /api/whatsapp/compartilhamento       grupos de destino, paineis e legenda
+POST   /api/whatsapp/compartilhar           multipart: dashboard, ranking,
+                                            relatorio-corredor, relatorio-classe
 ```
+
+> Todas as rotas de `/api/whatsapp` sao de SUPER_ADMIN/STORE_ADMIN e usam o
+> escopo de loja: o super admin escolhe a loja com `?lojaId=`, o admin de loja
+> opera sempre na propria.
+
+---
+
+## 📲 Compartilhamento automatico no WhatsApp
+
+Cada loja pareia o proprio numero por QR Code (Baileys) e escolhe em quais
+grupos as imagens do dashboard, do ranking e dos relatorios devem cair. Ao
+terminar de processar uma planilha, o navegador monta essas telas fora da area
+visivel, ja filtradas pelo **dia da auditoria** e pela **loja** do upload, tira
+o print e manda para a API, que repassa aos grupos.
+
+As imagens nascem do DOM (html2canvas), por isso a renderizacao e do lado do
+cliente: e o mesmo canvas que o botao "Compartilhar" de cada tela produz, sem
+uma segunda versao do layout para manter.
+
+O recorte de tempo das imagens e configuravel por loja (`periodoCaptura`):
+
+| valor | o que mostra |
+|---|---|
+| `auditoria` (padrao) | o dia exato da planilha que acabou de entrar |
+| `hoje` | sempre o dia de hoje |
+| `semana` | ultimos 7 dias |
+| `mes` | ultimos 30 dias |
+
+- Sessoes do Baileys: `backend/sessions/<lojaId>` (fora do Git). O boot reabre
+  sozinho o que ja estava pareado — por isso **nao rode duas instancias do
+  backend sobre a mesma pasta `sessions/`**: os dois sockets disputam o mesmo
+  pareamento e o WhatsApp derruba um deles (codigo 440).
+- Auditoria cancelada nao dispara envio.
+- Falha no compartilhamento nunca marca o upload da planilha como erro.
 
 ---
 

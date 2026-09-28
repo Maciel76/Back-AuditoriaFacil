@@ -93,3 +93,20 @@ export const uploadConquistaImagem = multer({
     cb(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 3 MB são aceitas"));
   },
 });
+
+// ============ Upload de painéis para o WhatsApp (memoryStorage) ============
+// As imagens do dashboard/ranking/relatórios são geradas no navegador e só
+// passam pelo servidor a caminho do grupo — não ficam em disco.
+const PAINEL_MAX_BYTES = 12 * 1024 * 1024;
+
+export const uploadPaineis = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PAINEL_MAX_BYTES, files: 6 },
+  fileFilter: (_req, file, cb) => {
+    const mimeType = (file.mimetype || "").toLowerCase();
+    if (mimeType === "image/png" || mimeType === "image/jpeg") {
+      return cb(null, true);
+    }
+    cb(new Error("Apenas imagens PNG ou JPEG são aceitas"));
+  },
+});

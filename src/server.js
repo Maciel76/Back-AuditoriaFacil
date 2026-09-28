@@ -19,10 +19,12 @@ import auditoriasRoutes from "./routes/auditorias.routes.js";
 import metricasRoutes from "./routes/metricas.routes.js";
 import conquistasRoutes from "./routes/conquistas.routes.js";
 import configRoutes from "./routes/config.routes.js";
+import whatsappRoutes from "./routes/whatsapp.routes.js";
 import {
   semearConquistasSeNecessario,
   sincronizarConquistasPadrao,
 } from "./services/conquistasSeed.js";
+import { restaurarSessoes } from "./services/whatsappManager.js";
 
 async function bootstrap() {
   await connectDB();
@@ -88,6 +90,7 @@ async function bootstrap() {
   app.use("/api/metricas", metricasRoutes);
   app.use("/api/conquistas", conquistasRoutes);
   app.use("/api/config", configRoutes);
+  app.use("/api/whatsapp", whatsappRoutes);
 
   app.use((req, res) =>
     res.status(404).json({ error: "Rota não encontrada", path: req.path }),
@@ -97,6 +100,12 @@ async function bootstrap() {
   app.listen(env.port, () => {
     console.log(`[server] API ouvindo em http://localhost:${env.port}`);
   });
+
+  // Reabre as sessões de WhatsApp já pareadas. Depois do listen, de propósito:
+  // uma loja com sessão ruim não pode atrasar a subida da API.
+  restaurarSessoes().catch((e) =>
+    console.warn("[WA] falha ao restaurar sessões:", e.message),
+  );
 }
 
 bootstrap().catch((e) => {
