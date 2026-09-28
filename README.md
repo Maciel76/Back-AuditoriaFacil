@@ -199,9 +199,23 @@ O recorte de tempo das imagens e configuravel por loja (`periodoCaptura`):
 - Sessoes do Baileys: `backend/sessions/<lojaId>` (fora do Git). O boot reabre
   sozinho o que ja estava pareado — por isso **nao rode duas instancias do
   backend sobre a mesma pasta `sessions/`**: os dois sockets disputam o mesmo
-  pareamento e o WhatsApp derruba um deles (codigo 440).
+  pareamento, o WhatsApp devolve 440 e, se a disputa azedar, encerra o
+  pareamento de vez (so o QR resolve). Duas protecoes existem para isso:
+  `sessions/.restauracao.lock` (o segundo processo sobe sem reabrir as sessoes)
+  e a variavel `WHATSAPP_RESTAURAR_SESSOES=false`.
 - Auditoria cancelada nao dispara envio.
 - Falha no compartilhamento nunca marca o upload da planilha como erro.
+
+### Imagens no servidor
+
+Nenhuma. As imagens sao geradas no navegador e passam pelo servidor so a
+caminho do grupo: o multer usa `memoryStorage()`, entao elas existem apenas em
+memoria durante a requisicao e nada e gravado em disco.
+
+O botao **Reenviar** nao guarda imagem para depois — ele manda o navegador
+gerar tudo de novo, com o mesmo recorte do envio anterior (mesma auditoria,
+mesmo tipo, mesmo periodo). O que fica no banco e so a ficha do ultimo envio
+(`ultimoEnvio`): data, quais paineis sairam e para quais grupos.
 
 ---
 

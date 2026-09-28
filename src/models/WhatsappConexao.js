@@ -75,6 +75,24 @@ const WhatsappConexaoSchema = new mongoose.Schema(
       legenda: { type: String, default: "", maxlength: 600 },
     },
 
+    /**
+     * Ficha do último envio, para o botão de reenvio.
+     *
+     * Só metadado: que auditoria era, quais painéis saíram e para onde. As
+     * imagens NÃO ficam no servidor — o reenvio manda o navegador gerá-las de
+     * novo, do mesmo jeito que o envio automático faz.
+     */
+    ultimoEnvio: {
+      em: Date,
+      contexto: { type: mongoose.Schema.Types.Mixed, default: {} },
+      paineis: {
+        type: [{ _id: false, chave: String, titulo: String }],
+        default: [],
+      },
+      grupos: { type: [GrupoDestinoSchema], default: [] },
+      totalEnviados: { type: Number, default: 0 },
+    },
+
     criadoPor: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
   },
   { timestamps: true },

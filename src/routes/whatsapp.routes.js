@@ -54,9 +54,23 @@ function projetarConexao(conexao, sessao) {
   const emMemoria = sessao?.getStatus() || null;
   const status = emMemoria ? emMemoria.status : STATUS_CONEXAO.DESCONECTADO;
 
+  const ultimo = conexao.ultimoEnvio;
+
   return {
     status,
     qrCode: status === STATUS_CONEXAO.CONECTANDO ? emMemoria?.qrCode || null : null,
+    ultimoEnvio: ultimo?.paineis?.length
+      ? {
+          em: ultimo.em,
+          contexto: ultimo.contexto || {},
+          totalEnviados: ultimo.totalEnviados || 0,
+          paineis: (ultimo.paineis || []).map((p) => ({
+            chave: p.chave,
+            titulo: p.titulo,
+          })),
+          grupos: (ultimo.grupos || []).map((g) => g.nome || g.jid),
+        }
+      : null,
     phoneNumber: emMemoria?.phoneNumber || conexao.phoneNumber || "",
     ultimaConexaoEm: conexao.ultimaConexaoEm || null,
     ultimoErro: conexao.ultimoErro || "",
@@ -131,6 +145,11 @@ router.post(
     await WhatsappConexao.updateOne(
       { loja: req.escopoLojaId },
       { $set: { "compartilhamentoAuto.grupos": [] } },
+    );
+    // Sem número pareado não há para onde reenviar.
+    await WhatsappConexao.updateOne(
+      { loja: req.escopoLojaId },
+      { $unset: { ultimoEnvio: "" } },
     );
     res.json({ ok: true, status: STATUS_CONEXAO.DESCONECTADO });
   }),

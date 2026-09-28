@@ -170,6 +170,31 @@ export async function compartilharPaineis({
   }
 
   const enviados = resultados.filter((r) => r.ok).length;
+
+  // Anota o que foi mandado, para o botão de reenvio saber qual auditoria
+  // refazer. Só metadado: nenhuma imagem fica no servidor. Falha aqui não
+  // invalida um envio que já chegou ao grupo.
+  if (enviados > 0) {
+    await WhatsappConexao.updateOne(
+      { loja: lojaId },
+      {
+        $set: {
+          ultimoEnvio: {
+            em: new Date(),
+            contexto,
+            paineis: ordenadas.map(({ chave, titulo }) => ({ chave, titulo })),
+            grupos,
+            totalEnviados: enviados,
+          },
+        },
+      },
+    ).catch((err) =>
+      console.warn(
+        `[WA ${lojaId}] não foi possível anotar o último envio: ${err.message}`,
+      ),
+    );
+  }
+
   return {
     enviado: enviados > 0,
     totalEnviados: enviados,

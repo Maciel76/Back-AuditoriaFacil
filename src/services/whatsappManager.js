@@ -94,6 +94,65 @@ export async function encerrarSessao(lojaId) {
   ).catch(() => {});
 }
 
+const ARQUIVO_TRAVA = path.join(SESSOES_DIR, ".restauracao.lock");
+
+function processoVivo(pid) {
+  if (!pid || pid === process.pid) return false;
+  try {
+    // Sinal 0 não mata nada: só pergunta se o processo existe.
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM = existe, mas é de outro usuário. Ainda conta como vivo.
+    return err?.code === "EPERM";
+  }
+}
+
+/**
+ * Impede que duas instâncias reabram as MESMAS sessões automaticamente.
+ *
+ * Dois sockets na mesma sessão do WhatsApp se derrubam (erro 440) e, quando a
+ * disputa azeda, o WhatsApp encerra o pareamento de vez — aí só resta ler o QR
+ * outra vez. A trava guarda o PID de quem restaurou; se aquele processo ainda
+ * está de pé, o segundo sobe sem tocar nas sessões.
+ */
+function tentarTravarRestauracao() {
+  try {
+    fs.mkdirSync(SESSOES_DIR, { recursive: true });
+
+    if (fs.existsSync(ARQUIVO_TRAVA)) {
+      const dono = JSON.parse(fs.readFileSync(ARQUIVO_TRAVA, "utf8"));
+      if (processoVivo(dono?.pid)) {
+        console.warn(
+          `[WA] sessões já restauradas pelo processo ${dono.pid}; esta instância não vai reabri-las. ` +
+            "Rodar duas instâncias sobre a mesma pasta sessions/ derruba o pareamento.",
+        );
+        return false;
+      }
+    }
+
+    fs.writeFileSync(
+      ARQUIVO_TRAVA,
+      JSON.stringify({ pid: process.pid, em: new Date().toISOString() }),
+    );
+    const soltar = () => {
+      try {
+        const dono = JSON.parse(fs.readFileSync(ARQUIVO_TRAVA, "utf8"));
+        if (dono?.pid === process.pid) fs.rmSync(ARQUIVO_TRAVA, { force: true });
+      } catch {
+        /* nada a soltar */
+      }
+    };
+    process.once("exit", soltar);
+    process.once("SIGINT", () => { soltar(); process.exit(0); });
+    process.once("SIGTERM", () => { soltar(); process.exit(0); });
+    return true;
+  } catch (err) {
+    console.warn(`[WA] não foi possível checar a trava de restauração: ${err.message}`);
+    return true;
+  }
+}
+
 /**
  * Reabre no boot as sessões que já tinham credenciais salvas.
  *
@@ -101,10 +160,11 @@ export async function encerrarSessao(lojaId) {
  */
 export async function restaurarSessoes() {
   if (!fs.existsSync(SESSOES_DIR)) return 0;
+  if (!tentarTravarRestauracao()) return 0;
 
   const pastas = fs
     .readdirSync(SESSOES_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
     .map((e) => e.name)
     .filter((nome) =>
       fs.existsSync(path.join(SESSOES_DIR, nome, "creds.json")),
