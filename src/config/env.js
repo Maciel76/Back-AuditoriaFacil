@@ -14,6 +14,12 @@ export const env = {
   jwtSecret: required('JWT_SECRET', 'dev-secret-change-me'),
   jwtExpires: required('JWT_EXPIRES', '7d'),
   uploadMaxMb: Number(required('UPLOAD_MAX_MB', 100)),
+  // Reabrir no boot as sessões de WhatsApp já pareadas. Desligue numa segunda
+  // instância que compartilhe a mesma pasta `sessions/`: dois sockets na mesma
+  // sessão se derrubam em looping (erro 440).
+  whatsappRestaurarSessoes:
+    String(process.env.WHATSAPP_RESTAURAR_SESSOES ?? 'true').toLowerCase() !==
+    'false',
   bootstrap: {
     email: process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@novaauditoria.local',
     password: process.env.BOOTSTRAP_ADMIN_PASSWORD || 'admin123',

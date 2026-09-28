@@ -103,9 +103,15 @@ async function bootstrap() {
 
   // Reabre as sessões de WhatsApp já pareadas. Depois do listen, de propósito:
   // uma loja com sessão ruim não pode atrasar a subida da API.
-  restaurarSessoes().catch((e) =>
-    console.warn("[WA] falha ao restaurar sessões:", e.message),
-  );
+  if (env.whatsappRestaurarSessoes) {
+    restaurarSessoes().catch((e) =>
+      console.warn("[WA] falha ao restaurar sessões:", e.message),
+    );
+  } else {
+    console.log(
+      "[WA] restauração de sessões desligada (WHATSAPP_RESTAURAR_SESSOES=false)",
+    );
+  }
 }
 
 bootstrap().catch((e) => {
