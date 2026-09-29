@@ -3518,7 +3518,22 @@ router.get(
     });
     if (!dados)
       return res.status(404).json({ error: "Colaborador não encontrado" });
-    res.json(dados);
+
+    // A tela de administração mostra o MESMO perfil que o colaborador vê de si
+    // no portal, então precisa do mesmo conteúdo: conquistas com tiers e a
+    // posição no ranking geral. Sem isso o administrador veria menos do que o
+    // próprio colaborador.
+    const conquistas = await resolverConquistasPortal(dados.colaborador || {});
+
+    // O ranking geral é sempre dentro da loja do colaborador. Para o super
+    // admin sem loja no escopo, `req.escopoLojaId` vem vazio e a posição sairia
+    // comparando colaborador de loja diferente.
+    const rankingGeral = await calcularRankingGeralPortal(
+      req.escopoLojaId || dados.colaborador.loja?.toString() || null,
+      req.params.id,
+    );
+
+    res.json({ ...dados, conquistas, rankingGeral });
   }),
 );
 
