@@ -2,13 +2,13 @@ import { Colaborador } from "../models/Colaborador.js";
 import { httpError } from "../utils/http.js";
 
 export const CATALOGO_LOJA_PORTAL = Object.freeze([
-  { codigo: "mascote-gato", categoria: "mascote", nome: "Gatinho Companheiro", descricao: "Um gato animado no seu perfil: aparece por 5 segundos, descansa por 10 e volta para brincar.", tipo: "Mascote animado", preco: 30000, icone: "star", cor: "#f59e0b" },
-  { codigo: "titulo-explorador", nome: "Explorador", descricao: "Para quem está sempre descobrindo novos caminhos.", tipo: "Título de perfil", preco: 10000, icone: "star", cor: "#22d3ee" },
-  { codigo: "titulo-guardiao", nome: "Guardião da Loja", descricao: "Mostre o cuidado que você tem com a sua equipe.", tipo: "Título de perfil", preco: 25000, icone: "shield-halved", cor: "#a855f7" },
-  { codigo: "titulo-lenda", nome: "Lenda da Equipe", descricao: "Um toque dourado para deixar sua marca no perfil.", tipo: "Título de perfil", preco: 50000, icone: "trophy", cor: "#f59e0b" },
-  { codigo: "fundo-aurora", categoria: "fundo", nome: "Aurora Boreal", descricao: "Luzes verdes e azuis para iluminar seu cartão de perfil.", tipo: "Fundo de perfil", preco: 20000, icone: "star", cor: "#10b981" },
-  { codigo: "fundo-nebulosa", categoria: "fundo", nome: "Nebulosa", descricao: "Tons de violeta e rosa em um fundo inspirado no espaço.", tipo: "Fundo de perfil", preco: 35000, icone: "moon", cor: "#a855f7" },
-  { codigo: "fundo-dourado", categoria: "fundo", nome: "Sol Dourado", descricao: "Um brilho dourado para destacar suas conquistas.", tipo: "Fundo de perfil", preco: 50000, icone: "sun", cor: "#f59e0b" },
+  { codigo: "mascote-gato", categoria: "mascote", nome: "Gatinho Companheiro", descricao: "Um gato animado no seu perfil: aparece por 5 segundos, descansa por 10 e volta para brincar.", tipo: "Mascote animado", preco: 3000, icone: "star", cor: "#f59e0b" },
+  { codigo: "titulo-explorador", nome: "Explorador", descricao: "Para quem está sempre descobrindo novos caminhos.", tipo: "Título de perfil", preco: 1000, icone: "star", cor: "#22d3ee" },
+  { codigo: "titulo-guardiao", nome: "Guardião da Loja", descricao: "Mostre o cuidado que você tem com a sua equipe.", tipo: "Título de perfil", preco: 2500, icone: "shield-halved", cor: "#a855f7" },
+  { codigo: "titulo-lenda", nome: "Lenda da Equipe", descricao: "Um toque dourado para deixar sua marca no perfil.", tipo: "Título de perfil", preco: 5000, icone: "trophy", cor: "#f59e0b" },
+  { codigo: "fundo-aurora", categoria: "fundo", nome: "Aurora Boreal", descricao: "Luzes verdes e azuis para iluminar seu cartão de perfil.", tipo: "Fundo de perfil", preco: 2000, icone: "star", cor: "#10b981" },
+  { codigo: "fundo-nebulosa", categoria: "fundo", nome: "Nebulosa", descricao: "Tons de violeta e rosa em um fundo inspirado no espaço.", tipo: "Fundo de perfil", preco: 3500, icone: "moon", cor: "#a855f7" },
+  { codigo: "fundo-dourado", categoria: "fundo", nome: "Sol Dourado", descricao: "Um brilho dourado para destacar suas conquistas.", tipo: "Fundo de perfil", preco: 5000, icone: "sun", cor: "#f59e0b" },
 ]);
 
 export function tituloLojaPerfil(colaborador) {
