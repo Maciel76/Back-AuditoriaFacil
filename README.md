@@ -1,4 +1,7 @@
 # Novo sistema de auditoriaAuditoria
+
+Automação de planilhas com agente Windows: veja [local-agent/README.md](local-agent/README.md).
+
 Sistema multi-tenant para gestão de **auditorias de loja** (Etiqueta, Presença e Ruptura) com cálculo automático de conformidade, pontuação, ranking de colaboradores/lojas, gamificação e dashboards.
 
 > **Stack**: Node.js 22 · Express 5 · MongoDB · Mongoose 8 · Vue 3.5 · Vite 7 · Pinia · Chart.js · FontAwesome  

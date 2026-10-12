@@ -44,6 +44,13 @@ const ColaboradorSchema = new mongoose.Schema(
     cargo: { type: String, trim: true },
     setor: { type: String, trim: true },
     avatarUrl: String,
+    // Ausente mantém a exibição automática; [] oculta todas as miniaturas.
+    conquistasExibidas: { type: [String], default: undefined },
+    tiersConquistasExibidas: {
+      type: Map,
+      of: { type: String, enum: TIERS },
+      default: undefined,
+    },
     usuario: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario" },
     ativo: { type: Boolean, default: true },
 
@@ -53,6 +60,20 @@ const ColaboradorSchema = new mongoose.Schema(
 
     // Estatísticas agregadas (atualizadas a cada upload)
     pontuacao: { type: Number, default: 0 },
+    // Sem defaults persistidos: salvar uma auditoria em uma conta antiga não
+    // pode sobrescrever uma compra concorrente com uma carteira vazia.
+    moedasGastas: { type: Number, default: undefined, min: 0 },
+    itensLoja: {
+      type: [new mongoose.Schema({
+        codigo: { type: String, required: true },
+        preco: { type: Number, required: true, min: 0 },
+        compradoEm: { type: Date, required: true },
+      }, { _id: false })],
+      default: undefined,
+    },
+    tituloPerfilCodigo: { type: String, default: undefined },
+    fundoPerfilCodigo: { type: String, default: undefined },
+    mascotePerfilCodigo: { type: String, default: undefined },
     // Separação explícita para que bônus de conquistas possam ser recalculados
     // sem alterar os pontos originados pelas auditorias.
     pontuacaoAuditorias: { type: Number },

@@ -14,6 +14,7 @@ import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { ROLES } from "../models/Usuario.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
+import { tituloLojaPerfil, fundoLojaPerfil, mascoteLojaPerfil } from "../services/lojaPortalService.js";
 import { classificar, REGRAS } from "../services/regras.js";
 import mongoose from "mongoose";
 
@@ -1138,6 +1139,7 @@ function resumirColegaPortal(colaborador) {
     nome: colaborador.nome,
     cargo: colaborador.cargo || "",
     avatarUrl: colaborador.avatarUrl || "",
+    fundoPerfil: fundoLojaPerfil(colaborador),
     nivel: Number(colaborador.nivel || 1),
     pontuacao: Number(colaborador.pontuacao || 0),
     totalAuditorias: Number(colaborador.totalAuditorias || 0),
@@ -1147,11 +1149,17 @@ function resumirColegaPortal(colaborador) {
 }
 
 function montarCabecalhoPerfilPublicoColaborador(colaborador) {
+  const titulo = tituloLojaPerfil(colaborador);
   return {
     _id: colaborador._id,
     nome: colaborador.nome,
     cargo: colaborador.cargo || "",
     avatarUrl: colaborador.avatarUrl || "",
+    conquistasExibidas: colaborador.conquistasExibidas,
+    tiersConquistasExibidas: colaborador.tiersConquistasExibidas,
+    tituloPerfil: titulo ? { nome: titulo.nome, cor: titulo.cor, icone: titulo.icone } : null,
+    mascotePerfil: mascoteLojaPerfil(colaborador),
+    fundoPerfil: fundoLojaPerfil(colaborador),
     nivel: Number(colaborador.nivel || 1),
     pontuacao: Number(colaborador.pontuacao || 0),
     totalAuditorias: Number(colaborador.totalAuditorias || 0),
@@ -1979,6 +1987,8 @@ router.get(
         nome: 1,
         cargo: 1,
         avatarUrl: 1,
+        fundoPerfilCodigo: 1,
+        "itensLoja.codigo": 1,
         nivel: 1,
         pontuacao: 1,
         totalAuditorias: 1,

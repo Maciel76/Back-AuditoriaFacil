@@ -19,6 +19,8 @@ import auditoriasRoutes from "./routes/auditorias.routes.js";
 import metricasRoutes from "./routes/metricas.routes.js";
 import conquistasRoutes from "./routes/conquistas.routes.js";
 import configRoutes from "./routes/config.routes.js";
+import automacaoRoutes from "./routes/automacao.routes.js";
+import { Automacao, AutomacaoJob, ImportacaoLock } from "./models/Automacao.js";
 import whatsappRoutes from "./routes/whatsapp.routes.js";
 import {
   semearConquistasSeNecessario,
@@ -28,6 +30,7 @@ import { restaurarSessoes } from "./services/whatsappManager.js";
 
 async function bootstrap() {
   await connectDB();
+  await Promise.all([Automacao.init(), AutomacaoJob.init(), ImportacaoLock.init()]);
 
   const existeAdmin = await Usuario.findOne({ role: ROLES.SUPER_ADMIN });
   if (!existeAdmin) {
@@ -90,6 +93,7 @@ async function bootstrap() {
   app.use("/api/metricas", metricasRoutes);
   app.use("/api/conquistas", conquistasRoutes);
   app.use("/api/config", configRoutes);
+  app.use("/api/automacao", automacaoRoutes);
   app.use("/api/whatsapp", whatsappRoutes);
 
   app.use((req, res) =>

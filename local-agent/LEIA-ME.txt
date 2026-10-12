@@ -1,0 +1,32 @@
+FLASHUB - AGENTE LOCAL PARA WINDOWS x64
+
+1. Extraia TODO o ZIP para uma pasta permanente, por exemplo Documentos/FlashubAgente.
+2. Abra FlashubAgente.exe. Não é necessário instalar Node.js.
+3. Copie o endereço da API e a chave da aba Automação do Flashub.
+4. Informe o endereço completo do RUB e suas credenciais nessa máquina.
+5. Escolha Microsoft Edge ou Google Chrome, já instalado no computador.
+6. Clique em Salvar e conectar. O painel deve mostrar Online em poucos segundos.
+7. As páginas e filtros podem ser definidos depois na aba Automação.
+
+Fechar a janela mantém o agente na bandeja, perto do relógio do Windows.
+Para encerrar: botão direito no ícone > Sair.
+Para abrir automaticamente ao entrar no Windows, marque a opção antes de conectar.
+A inicialização automática funciona após LOGIN do usuário; não é um serviço de sistema.
+A máquina precisa estar ligada, sem suspensão, com acesso à internet e ao RUB.
+
+As credenciais ficam em %LOCALAPPDATA%/FlashubAgente/config.dat, protegidas com
+DPAPI para o usuário do Windows. Não são enviadas ao Flashub nem incluídas no ZIP.
+Cada chave conecta apenas uma instalação. Para trocar de máquina, gere nova chave.
+A API da VPS precisa usar HTTPS. HTTP é aceito somente para localhost em desenvolvimento.
+
+O agente só permite navegação no endereço do RUB informado localmente.
+SSO em outro domínio, certificados internos não confiáveis, CAPTCHA, downloads via
+pop-up ou exportação em PDF exigem adaptação e validação específicas.
+
+Não há rotina de auditoria pré-configurada. Até salvar uma rotina e solicitar uma
+execução ou habilitar o agendamento, o agente apenas mantém a conexão online.
+Os dados são importados no Flashub; esta versão não dispara imagens no WhatsApp.
+
+Ao perder conexão, o agente tenta novamente. Se o envio foi aceito, ele consulta
+o estado antes de qualquer nova ação e não repete automaticamente a importação.
+Em caso de erro, consulte o histórico. Nunca envie suas credenciais por mensagens.

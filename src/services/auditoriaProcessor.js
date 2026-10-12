@@ -1,4 +1,5 @@
 import dayjs from "dayjs";
+import { ImportacaoLock } from "../models/Automacao.js";
 import { Auditoria, TIPOS_AUDITORIA } from "../models/Auditoria.js";
 import { AuditItem } from "../models/AuditItem.js";
 import { Colaborador } from "../models/Colaborador.js";
@@ -56,7 +57,22 @@ function calcNivel(pontuacao) {
  * Estratégia idempotente: para a mesma (loja, tipo, dia) reaproveita a Auditoria
  * existente substituindo seus AuditItem (re-upload do mesmo dia atualiza valores).
  */
-export async function processarPlanilha({
+export async function processarPlanilha(args) {
+  const id = String(args.lojaId);
+  try {
+    await ImportacaoLock.create({ _id: id });
+  } catch (error) {
+    if (error.code === 11000) throw new Error('Já existe uma importação em andamento ou interrompida para esta loja.');
+    throw error;
+  }
+  try {
+    return await processarPlanilhaInterna(args);
+  } finally {
+    await ImportacaoLock.deleteOne({ _id: id });
+  }
+}
+
+async function processarPlanilhaInterna({
   buffer,
   filename,
   lojaId,

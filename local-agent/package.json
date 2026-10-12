@@ -1,0 +1,10 @@
+{
+  "name": "flashub-agente-local",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/agent.js", "test": "node --test test/*.test.js", "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File build-windows.ps1" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "playwright-core": "1.63.0" },
+  "devDependencies": { "mongodb-memory-server": "10.4.1" }
+}

@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { isUtf8 } from "node:buffer";
 import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat.js";
 dayjs.extend(customParseFormat);
@@ -174,7 +175,11 @@ function mapearColunas(linha0) {
  * Cada linha tem todos os campos canônicos prontos para persistência.
  */
 export function lerPlanilha(buffer, { filename, tipoForcado } = {}) {
-  const wb = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  // CSV UTF-8 vindo do agente pode não ter BOM. Preserve também zeros iniciais dos SKUs.
+  const csvUtf8 = /\.csv$/i.test(filename || '') && isUtf8(buffer);
+  const wb = XLSX.read(csvUtf8 ? buffer.toString('utf8') : buffer, {
+    type: csvUtf8 ? 'string' : 'buffer', cellDates: false, raw: true,
+  });
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   if (!ws) throw new Error("Planilha vazia");

@@ -4,4 +4,8 @@ node_modules
 .DS_Store
 
 sessions/
+local-agent/node_modules/
+local-agent/dist/
+releases/*.zip
+local-agent/test/*.png
 

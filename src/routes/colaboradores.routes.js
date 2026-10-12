@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { Colaborador } from "../models/Colaborador.js";
+import { TIERS } from "../models/Conquista.js";
 import { Usuario, ROLES } from "../models/Usuario.js";
 import {
   autenticar,
@@ -12,6 +13,8 @@ import { autenticarColaborador } from "../middlewares/authColaborador.js";
 import { uploadAvatar } from "../middlewares/upload.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { verificarToken } from "../utils/jwt.js";
+import { resolverConquistasPortal } from "../services/conquistasService.js";
+import { CATALOGO_LOJA_PORTAL, estadoLojaPortal, comprarItemPortal, equiparTituloPortal, equiparFundoPortal, equiparMascotePortal } from "../services/lojaPortalService.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -57,7 +60,94 @@ router.get(
       .populate("loja", "nome slug codigo cidade estado avatarUrl")
       .lean();
     if (!colab) throw httpError(404, "Colaborador não encontrado");
-    res.json(colab);
+    res.json({ ...colab, ...estadoLojaPortal(colab) });
+  }),
+);
+
+router.get(
+  "/portal/me/loja",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    res.json({ ...estadoLojaPortal(req.colaborador), catalogo: CATALOGO_LOJA_PORTAL });
+  }),
+);
+
+router.post(
+  "/portal/me/loja/compras",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z.object({ codigo: z.string().min(1).max(100) }).safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Escolha um item da loja");
+    res.json(await comprarItemPortal(req.colaborador._id, dados.data.codigo));
+  }),
+);
+
+router.patch(
+  "/portal/me/loja/titulo",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z.object({ codigo: z.string().max(100) }).safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Título inválido");
+    res.json(await equiparTituloPortal(req.colaborador._id, dados.data.codigo));
+  }),
+);
+
+router.patch(
+  "/portal/me/loja/fundo",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z.object({ codigo: z.string().max(100) }).safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Fundo inválido");
+    res.json(await equiparFundoPortal(req.colaborador._id, dados.data.codigo));
+  }),
+);
+
+router.patch(
+  "/portal/me/loja/mascote",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z.object({ codigo: z.string().max(100) }).safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Mascote inválido");
+    res.json(await equiparMascotePortal(req.colaborador._id, dados.data.codigo));
+  }),
+);
+
+router.patch(
+  "/portal/me/conquistas-exibidas",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z
+      .object({
+        codigos: z.array(z.string().trim().min(1).max(100)).max(100),
+        tiers: z.record(z.enum(TIERS)).default({}),
+      })
+      .safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Seleção de conquistas inválida");
+
+    const codigos = [...new Set(dados.data.codigos)];
+    const conquistas = await resolverConquistasPortal(req.colaborador);
+    const desbloqueadas = new Map(
+      conquistas.filter((item) => item.desbloqueada).map((item) => [item.codigo, item]),
+    );
+    if (codigos.some((codigo) => !desbloqueadas.has(codigo))) {
+      throw httpError(400, "Escolha apenas conquistas que você já desbloqueou");
+    }
+
+    const tiersConquistasExibidas = {};
+    for (const codigo of codigos) {
+      const conquista = desbloqueadas.get(codigo);
+      const nivel = dados.data.tiers[codigo] || conquista.tierAtual;
+      if (!conquista.tiers.some((tier) => tier.nivel === nivel && tier.desbloqueado)) {
+        throw httpError(400, "Escolha apenas tiers que você já desbloqueou");
+      }
+      tiersConquistasExibidas[codigo] = nivel;
+    }
+
+    await Colaborador.updateOne(
+      { _id: req.colaborador._id },
+      { $set: { conquistasExibidas: codigos, tiersConquistasExibidas } },
+    );
+    res.json({ conquistasExibidas: codigos, tiersConquistasExibidas });
   }),
 );
 
