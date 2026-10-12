@@ -115,6 +115,13 @@ test("seleção de conquistas do perfil", async (t) => {
     assert.equal(atualizacoes, 2);
   });
 
+  await t.test("recusa mais de cinco conquistas sem alterar a seleção salva", async () => {
+    const excesso = await salvar({ codigos: ["A", "B", "C", "D", "E", "F"] });
+    assert.equal(excesso.status, 400);
+    assert.match((await excesso.json()).error, /máximo 5 conquistas/);
+    assert.equal(atualizacoes, 2);
+  });
+
   await t.test("exige um token de colaborador", async () => {
     assert.equal((await salvar({ codigos: [] }, "")).status, 401);
     const tokenAdmin = assinarToken({ sub: String(colaborador._id), role: "SUPER_ADMIN" });

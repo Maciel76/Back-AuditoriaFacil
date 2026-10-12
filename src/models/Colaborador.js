@@ -63,6 +63,18 @@ const ColaboradorSchema = new mongoose.Schema(
     // Sem defaults persistidos: salvar uma auditoria em uma conta antiga não
     // pode sobrescrever uma compra concorrente com uma carteira vazia.
     moedasGastas: { type: Number, default: undefined, min: 0 },
+    moedasBonus: { type: Number, default: undefined, min: 0 },
+    creditosMoedas: {
+      type: [new mongoose.Schema({
+        operacao: { type: String, required: true },
+        quantidade: { type: Number, required: true, min: 1 },
+        motivo: { type: String, required: true },
+        admin: { type: mongoose.Schema.Types.ObjectId, ref: "Usuario", required: true },
+        criadoEm: { type: Date, required: true },
+      }, { _id: false })],
+      default: undefined,
+      select: false,
+    },
     itensLoja: {
       type: [new mongoose.Schema({
         codigo: { type: String, required: true },

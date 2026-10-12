@@ -19,6 +19,7 @@ const SystemConfigSchema = new mongoose.Schema(
     // batida. Padrão: 2% — quando o percentual restante para concluir a
     // auditoria fica abaixo desse valor, considera-se meta atingida.
     metaPercentualRestante: { type: Number, default: 2, min: 0, max: 100 },
+    precosLojaPortal: { type: Map, of: { type: Number, min: 0, max: 1000000000 }, default: () => ({}) },
   },
   { timestamps: true },
 );

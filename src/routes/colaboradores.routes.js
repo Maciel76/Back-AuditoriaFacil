@@ -14,7 +14,7 @@ import { uploadAvatar } from "../middlewares/upload.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { verificarToken } from "../utils/jwt.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
-import { CATALOGO_LOJA_PORTAL, estadoLojaPortal, comprarItemPortal, equiparTituloPortal, equiparFundoPortal, equiparMascotePortal } from "../services/lojaPortalService.js";
+import { carregarCatalogoLojaPortal, estadoLojaPortal, comprarItemPortal, equiparTituloPortal, equiparFundoPortal, equiparMascotePortal } from "../services/lojaPortalService.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -68,7 +68,7 @@ router.get(
   "/portal/me/loja",
   autenticarColaborador,
   asyncHandler(async (req, res) => {
-    res.json({ ...estadoLojaPortal(req.colaborador), catalogo: CATALOGO_LOJA_PORTAL });
+    res.json({ ...estadoLojaPortal(req.colaborador), catalogo: await carregarCatalogoLojaPortal() });
   }),
 );
 
@@ -125,6 +125,7 @@ router.patch(
     if (!dados.success) throw httpError(400, "Seleção de conquistas inválida");
 
     const codigos = [...new Set(dados.data.codigos)];
+    if (codigos.length > 5) throw httpError(400, "Escolha no máximo 5 conquistas para o perfil");
     const conquistas = await resolverConquistasPortal(req.colaborador);
     const desbloqueadas = new Map(
       conquistas.filter((item) => item.desbloqueada).map((item) => [item.codigo, item]),

@@ -3,12 +3,18 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import express from "express";
 import { Colaborador } from "../src/models/Colaborador.js";
+import { SystemConfig } from "../src/models/SystemConfig.js";
 import router from "../src/routes/colaboradores.routes.js";
-import { estadoLojaPortal, tituloLojaPerfil } from "../src/services/lojaPortalService.js";
+import { estadoLojaPortal, tituloLojaPerfil, CATALOGO_LOJA_PORTAL } from "../src/services/lojaPortalService.js";
 import { assinarToken } from "../src/utils/jwt.js";
 import { errorMiddleware } from "../src/utils/http.js";
 
 test("loja do portal: saldo, compras e títulos", async (t) => {
+  // Preços administrativos diferentes dos padrões, usados também no débito.
+  t.mock.method(SystemConfig, "findOne", () => ({ lean: async () => ({ precosLojaPortal: {
+    "titulo-explorador": 100, "titulo-guardiao": 250, "titulo-lenda": 500,
+    "fundo-aurora": 200, "fundo-nebulosa": 350, "fundo-dourado": 500, "mascote-gato": 300,
+  } }) }));
   const id = "507f1f77bcf86cd799439011";
   let colaborador;
   const reset = (pontuacao = 5799.3) => {
@@ -32,7 +38,7 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     if (propriedade?.$ne && colaborador.itensLoja.some((i) => i.codigo === propriedade.$ne)) return null;
     if (filtro.$expr) {
       assert.deepEqual(filtro.$expr.$gte[0], {
-        $round: [{ $subtract: [{ $ifNull: ["$pontuacao", 0] }, { $ifNull: ["$moedasGastas", 0] }] }, 2],
+        $round: [{ $subtract: [{ $add: [{ $ifNull: ["$pontuacao", 0] }, { $ifNull: ["$moedasBonus", 0] }] }, { $ifNull: ["$moedasGastas", 0] }] }, 2],
       });
       assert.equal(filtro.$expr.$gte[1], update.$inc.moedasGastas);
       if (estadoLojaPortal(colaborador).saldoMoedas < filtro.$expr.$gte[1]) return null;
@@ -63,8 +69,9 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.equal(data.saldoMoedas, 5799.3);
-    assert.equal(data.catalogo.length, 7);
-    assert.equal(data.catalogo.filter((item) => item.categoria === "fundo").length, 3);
+    assert.equal(data.catalogo.length, CATALOGO_LOJA_PORTAL.length);
+    assert.equal(data.catalogo.find((item) => item.codigo === "titulo-explorador").preco, 100);
+    assert.equal(data.catalogo.filter((item) => item.categoria === "fundo").length, CATALOGO_LOJA_PORTAL.filter((item) => item.categoria === "fundo").length);
     assert.equal(data.fundoPerfil, null);
     assert.deepEqual(data.itensComprados, []);
   });
@@ -73,7 +80,7 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     const antigo = Colaborador.hydrate({ _id: id, nome: "Teste", pontuacao: 500 });
     antigo.pontuacao = 510;
     const alteracoes = antigo.getChanges().$set;
-    for (const campo of ["moedasGastas", "itensLoja", "tituloPerfilCodigo", "fundoPerfilCodigo", "mascotePerfilCodigo"]) {
+    for (const campo of ["moedasGastas", "moedasBonus", "creditosMoedas", "itensLoja", "tituloPerfilCodigo", "fundoPerfilCodigo", "mascotePerfilCodigo"]) {
       assert.equal(Object.hasOwn(alteracoes, campo), false);
     }
   });
@@ -167,6 +174,32 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.equal(colaborador.tituloPerfilCodigo, "titulo-explorador");
   });
 
+  await t.test("fundos animados podem ser comprados e trocados preservando outros itens", async () => {
+    reset(40000);
+    await request("/loja/compras", "POST", { codigo: "titulo-explorador" });
+    await request("/loja/compras", "POST", { codigo: "mascote-gato" });
+    let gasto = 400;
+    const codigos = ["fundo-estrelas", "fundo-oceano", "fundo-matrix", "fundo-crepusculo", "fundo-chamas", "fundo-prisma", "fundo-copa-2026", "fundo-natal"];
+    for (const codigo of codigos) {
+      assert.equal((await request("/loja/fundo", "PATCH", { codigo })).status, 400);
+      const compra = await request("/loja/compras", "POST", { codigo });
+      assert.equal(compra.status, 200);
+      gasto += CATALOGO_LOJA_PORTAL.find((item) => item.codigo === codigo).preco;
+      const data = await compra.json();
+      assert.equal(data.fundoPerfil.codigo, codigo);
+      assert.equal(data.saldoMoedas, 40000 - gasto);
+      assert.equal(data.tituloPerfilCodigo, "titulo-explorador");
+      assert.equal(data.mascotePerfilCodigo, "mascote-gato");
+      assert.equal((await request("/loja/compras", "POST", { codigo })).status, 409);
+    }
+    for (const codigo of codigos) {
+      const troca = await request("/loja/fundo", "PATCH", { codigo });
+      assert.equal((await troca.json()).fundoPerfil.codigo, codigo);
+    }
+    assert.equal(colaborador.moedasGastas, gasto);
+    assert.equal(colaborador.pontuacao, 40000);
+  });
+
   await t.test("rotas exigem token de colaborador", async () => {
     assert.equal((await request("/loja/mascote", "PATCH", { codigo: "" }, "")).status, 401);
     assert.equal((await request("/loja/fundo", "PATCH", { codigo: "" }, "")).status, 401);
@@ -175,6 +208,49 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     const admin = assinarToken({ sub: id, role: "SUPER_ADMIN" });
     assert.equal((await request("/loja/titulo", "PATCH", { codigo: "" }, `Bearer ${admin}`)).status, 403);
   });
+
+  await t.test("novos mascotes descontam moedas e podem ser reequipados sem nova cobrança", async () => {
+    const codigos = ["mascote-robo", "mascote-raposa", "mascote-pinguim", "mascote-astronauta"];
+    reset(20000);
+    let total = 0;
+    for (const codigo of codigos) {
+      const item = CATALOGO_LOJA_PORTAL.find((produto) => produto.codigo === codigo);
+      assert.equal((await request("/loja/mascote", "PATCH", { codigo })).status, 400);
+      const compra = await request("/loja/compras", "POST", { codigo });
+      assert.equal(compra.status, 200);
+      total += item.preco;
+      const carteira = await compra.json();
+      assert.equal(carteira.mascotePerfil.codigo, codigo);
+      assert.equal(carteira.mascotePerfil.nome, item.nome);
+      assert.equal(carteira.saldoMoedas, 20000 - total);
+      assert.equal((await request("/loja/compras", "POST", { codigo })).status, 409);
+    }
+    for (const codigo of codigos) {
+      const equipado = await request("/loja/mascote", "PATCH", { codigo });
+      assert.equal(equipado.status, 200);
+      assert.equal((await equipado.json()).mascotePerfil.codigo, codigo);
+    }
+    assert.equal(colaborador.moedasGastas, total);
+    assert.equal(colaborador.pontuacao, 20000);
+  });
+
+  for (const novoMascote of ["mascote-saltitante", "mascote-cachorro", "mascote-totoro", "mascote-panda", "mascote-coelho", "mascote-dragao", "mascote-capivara", "mascote-foguete", "mascote-fogo", "mascote-gato-chorando"]) {
+  await t.test(`${novoMascote}: compra e troca com o gato sem nova cobrança`, async () => {
+    reset(10000);
+    await request("/loja/compras", "POST", { codigo: "mascote-gato" });
+    const compra = await request("/loja/compras", "POST", { codigo: novoMascote });
+    assert.equal(compra.status, 200);
+    const data = await compra.json();
+    assert.equal(data.mascotePerfil.codigo, novoMascote);
+    assert.equal(data.saldoMoedas, 6700);
+    assert.equal((await request("/loja/compras", "POST", { codigo: novoMascote })).status, 409);
+    for (const codigo of ["mascote-gato", novoMascote]) {
+      const equipado = await request("/loja/mascote", "PATCH", { codigo });
+      assert.equal((await equipado.json()).mascotePerfil.codigo, codigo);
+    }
+    assert.equal(colaborador.moedasGastas, 3300);
+  });
+  }
   await t.test("mascote é comprado uma vez, equipado e removido sem alterar fundo e título", async () => {
     reset(1000);
     assert.equal((await request("/loja/mascote", "PATCH", { codigo: "mascote-gato" })).status, 400);
@@ -197,5 +273,16 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.equal((await (await request("/loja/mascote", "PATCH", { codigo: "" })).json()).mascotePerfil, null);
     assert.equal((await request("/loja/mascote", "PATCH", { codigo: "mascote-gato" })).status, 200);
     assert.equal(colaborador.moedasGastas, 600);
+  });
+  await t.test("moedas administrativas permitem comprar sem ganhar XP", async () => {
+    reset(0);
+    colaborador.moedasBonus = 1000;
+    assert.equal((await (await request("/loja")).json()).saldoMoedas, 1000);
+    const compra = await request("/loja/compras", "POST", { codigo: "titulo-explorador" });
+    assert.equal(compra.status, 200);
+    assert.equal((await compra.json()).saldoMoedas, 900);
+    assert.equal(colaborador.pontuacao, 0);
+    assert.equal(colaborador.nivel, 12);
+    assert.equal(colaborador.moedasBonus, 1000);
   });
 });

@@ -40,6 +40,10 @@ cp .env.example .env   # ajuste MONGO_URI e JWT_SECRET se quiser
 npm run dev            # http://localhost:4000
 ```
 
+O Nodemon verifica alterações em `src/` e `.env` a cada 300 ms e reinicia
+automaticamente após salvar. Uploads e sessões não provocam reinícios.
+Ao mudar `nodemon.json`, reinicie `npm run dev` uma vez para aplicar a configuração.
+
 Na primeira execução, o servidor cria um **super admin** padrão:
 ```
 email:  admin@novaauditoria.local
