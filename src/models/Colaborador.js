@@ -84,6 +84,7 @@ const ColaboradorSchema = new mongoose.Schema(
       default: undefined,
     },
     tituloPerfilCodigo: { type: String, default: undefined },
+    molduraPerfilCodigo: { type: String, default: undefined },
     fundoPerfilCodigo: { type: String, default: undefined },
     mascotePerfilCodigo: { type: String, default: undefined },
     // Separação explícita para que bônus de conquistas possam ser recalculados

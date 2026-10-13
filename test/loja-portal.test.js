@@ -18,7 +18,7 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
   const id = "507f1f77bcf86cd799439011";
   let colaborador;
   const reset = (pontuacao = 5799.3) => {
-    colaborador = new Colaborador({ _id: id, loja: "507f1f77bcf86cd799439012", codigoExterno: "123", nome: "Teste", nivel: 12, pontuacao, moedasGastas: 0, itensLoja: [], tituloPerfilCodigo: "" });
+    colaborador = new Colaborador({ _id: id, loja: "507f1f77bcf86cd799439012", codigoExterno: "123", nome: "Teste", nivel: 12, pontuacao, moedasGastas: 0, itensLoja: [], tituloPerfilCodigo: "", conquistas: [{ codigo: "teste", tierAtual: "raro", tiersDesbloqueados: ["comum", "raro"] }] });
   };
   reset();
   t.mock.method(Colaborador, "findById", (valor) => {
@@ -33,6 +33,15 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.equal(String(filtro._id), id);
     assert.equal(filtro.ativo, true);
     assert.equal(options.new, true);
+    if (filtro.$or && !filtro.$or.some((condicao) => {
+      const [campo, regra] = Object.entries(condicao)[0];
+      return colaborador.conquistas.some((conquista) => {
+        const valores = campo.endsWith("tierAtual") ? [conquista.tierAtual]
+          : campo.endsWith("tiersDesbloqueados") ? conquista.tiersDesbloqueados
+          : conquista.historicoDesbloqueios.map((registro) => registro.nivel);
+        return valores.some((valor) => regra.$in.includes(valor));
+      });
+    })) return null;
     const propriedade = filtro["itensLoja.codigo"];
     if (typeof propriedade === "string" && !colaborador.itensLoja.some((i) => i.codigo === propriedade)) return null;
     if (propriedade?.$ne && colaborador.itensLoja.some((i) => i.codigo === propriedade.$ne)) return null;
@@ -97,6 +106,15 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.ok(colaborador.itensLoja[0].compradoEm instanceof Date);
     assert.equal((await (await request("")).json()).saldoMoedas, 5699.3);
     assert.equal(tituloLojaPerfil(colaborador).nome, "Explorador");
+  });
+
+  await t.test("título acima da conquista é bloqueado sem débito", async () => {
+    const saldoAntes = estadoLojaPortal(colaborador).saldoMoedas;
+    const res = await request("/loja/compras", "POST", { codigo: "titulo-lenda" });
+    assert.equal(res.status, 403);
+    assert.match((await res.json()).error, /Lendário/);
+    assert.equal(estadoLojaPortal(colaborador).saldoMoedas, saldoAntes);
+    assert.equal(colaborador.itensLoja.length, 1);
   });
 
   await t.test("compras repetidas não descontam de novo", async () => {
@@ -251,6 +269,103 @@ test("loja do portal: saldo, compras e títulos", async (t) => {
     assert.equal(colaborador.moedasGastas, 3300);
   });
   }
+  for (const moldura of CATALOGO_LOJA_PORTAL.filter((item) => item.conquistaCodigo)) {
+    await t.test(`${moldura.codigo}: compra e perfil retornam o SVG correto`, async () => {
+      reset(10000);
+      const compra = await request("/loja/compras", "POST", { codigo: moldura.codigo });
+      assert.equal(compra.status, 200);
+      const estado = await compra.json();
+      assert.equal(estado.molduraPerfil.codigo, moldura.codigo);
+      assert.equal(estado.molduraPerfil.imagemUrl, moldura.imagemUrl);
+      assert.equal(estado.saldoMoedas, 10000 - moldura.preco);
+      const perfil = await (await request("")).json();
+      assert.equal(perfil.molduraPerfil.imagemUrl, moldura.imagemUrl);
+      await request("/loja/moldura", "PATCH", { codigo: "" });
+      const equipado = await (await request("/loja/moldura", "PATCH", { codigo: moldura.codigo })).json();
+      assert.equal(equipado.molduraPerfil.imagemUrl, moldura.imagemUrl);
+      assert.equal(equipado.saldoMoedas, estado.saldoMoedas);
+    });
+  }
+
+  await t.test("moldura neon imperial: compra e troca preservam o item e o saldo", async () => {
+    reset(10000);
+    const codigo = "moldura-neon-imperial";
+    const compra = await request("/loja/compras", "POST", { codigo });
+    assert.equal(compra.status, 200);
+    const estado = await compra.json();
+    assert.equal(estado.molduraPerfil.codigo, codigo);
+    assert.equal(estado.molduraPerfil.imagemUrl, "/images/molduras/neon-imperial.png");
+    assert.equal(estado.saldoMoedas, 7000);
+    await request("/loja/moldura", "PATCH", { codigo: "" });
+    const equipado = await (await request("/loja/moldura", "PATCH", { codigo })).json();
+    assert.equal(equipado.molduraPerfil.codigo, codigo);
+    assert.equal(equipado.saldoMoedas, 7000);
+  });
+
+  await t.test("moldura neon rosa: compra e troca preservam o item e o saldo", async () => {
+    reset(10000);
+    const codigo = "moldura-neon-rosa";
+    const compra = await request("/loja/compras", "POST", { codigo });
+    assert.equal(compra.status, 200);
+    const estado = await compra.json();
+    assert.equal(estado.molduraPerfil.codigo, codigo);
+    assert.equal(estado.molduraPerfil.imagemUrl, "/images/molduras/neon-rosa.png");
+    assert.equal(estado.saldoMoedas, 7000);
+    await request("/loja/moldura", "PATCH", { codigo: "" });
+    const equipado = await (await request("/loja/moldura", "PATCH", { codigo })).json();
+    assert.equal(equipado.molduraPerfil.codigo, codigo);
+    assert.equal(equipado.saldoMoedas, 7000);
+  });
+
+  await t.test("moldura neon amarela: compra e troca preservam o item e o saldo", async () => {
+    reset(10000);
+    const codigo = "moldura-neon-amarela";
+    const compra = await request("/loja/compras", "POST", { codigo });
+    assert.equal(compra.status, 200);
+    const estado = await compra.json();
+    assert.equal(estado.molduraPerfil.codigo, codigo);
+    assert.equal(estado.molduraPerfil.imagemUrl, "/images/molduras/neon-amarela.png");
+    assert.equal(estado.saldoMoedas, 7000);
+    await request("/loja/moldura", "PATCH", { codigo: "" });
+    const equipado = await (await request("/loja/moldura", "PATCH", { codigo })).json();
+    assert.equal(equipado.molduraPerfil.codigo, codigo);
+    assert.equal(equipado.saldoMoedas, 7000);
+  });
+
+  await t.test("moldura animada: compra aplica e reequipar preserva saldo", async () => {
+    reset(10000);
+    const codigo = "moldura-neon-orbital";
+    const compra = await request("/loja/compras", "POST", { codigo });
+    assert.equal(compra.status, 200);
+    const estado = await compra.json();
+    assert.equal(estado.molduraPerfil.codigo, codigo);
+    assert.equal(estado.saldoMoedas, 6000);
+    await request("/loja/moldura", "PATCH", { codigo: "" });
+    const equipado = await (await request("/loja/moldura", "PATCH", { codigo })).json();
+    assert.equal(equipado.molduraPerfil.codigo, codigo);
+    assert.equal(equipado.saldoMoedas, 6000);
+  });
+
+  await t.test("moldura: compra aplica, remoção preserva coleção e reequipar é gratuito", async () => {
+    reset(10000);
+    const codigo = "moldura-neon-roxo-ciano";
+    assert.equal((await request("/loja/moldura", "PATCH", { codigo })).status, 400);
+    const compra = await request("/loja/compras", "POST", { codigo });
+    assert.equal(compra.status, 200);
+    const estado = await compra.json();
+    assert.equal(estado.molduraPerfil.codigo, codigo);
+    assert.equal(estado.molduraPerfilCodigo, codigo);
+    assert.equal(estado.saldoMoedas, 7000);
+    assert.equal((await request("/loja/compras", "POST", { codigo })).status, 409);
+    const removido = await (await request("/loja/moldura", "PATCH", { codigo: "" })).json();
+    assert.equal(removido.molduraPerfil, null);
+    assert.ok(removido.itensComprados.includes(codigo));
+    const equipado = await (await request("/loja/moldura", "PATCH", { codigo })).json();
+    assert.equal(equipado.molduraPerfil.codigo, codigo);
+    assert.equal(equipado.saldoMoedas, 7000);
+    assert.equal((await request("/loja/moldura", "PATCH", { codigo: "titulo-explorador" })).status, 404);
+  });
+
   await t.test("mascote é comprado uma vez, equipado e removido sem alterar fundo e título", async () => {
     reset(1000);
     assert.equal((await request("/loja/mascote", "PATCH", { codigo: "mascote-gato" })).status, 400);

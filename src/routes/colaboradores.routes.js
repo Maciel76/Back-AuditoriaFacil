@@ -14,7 +14,7 @@ import { uploadAvatar } from "../middlewares/upload.js";
 import { asyncHandler, httpError } from "../utils/http.js";
 import { verificarToken } from "../utils/jwt.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
-import { carregarCatalogoLojaPortal, estadoLojaPortal, comprarItemPortal, equiparTituloPortal, equiparFundoPortal, equiparMascotePortal } from "../services/lojaPortalService.js";
+import { carregarCatalogoLojaPortal, estadoLojaPortal, comprarItemPortal, equiparTituloPortal, equiparFundoPortal, equiparMascotePortal, equiparMolduraPortal } from "../services/lojaPortalService.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -68,7 +68,7 @@ router.get(
   "/portal/me/loja",
   autenticarColaborador,
   asyncHandler(async (req, res) => {
-    res.json({ ...estadoLojaPortal(req.colaborador), catalogo: await carregarCatalogoLojaPortal() });
+    res.json({ ...estadoLojaPortal(req.colaborador), catalogo: await carregarCatalogoLojaPortal(req.colaborador) });
   }),
 );
 
@@ -99,6 +99,16 @@ router.patch(
     const dados = z.object({ codigo: z.string().max(100) }).safeParse(req.body);
     if (!dados.success) throw httpError(400, "Fundo inválido");
     res.json(await equiparFundoPortal(req.colaborador._id, dados.data.codigo));
+  }),
+);
+
+router.patch(
+  "/portal/me/loja/moldura",
+  autenticarColaborador,
+  asyncHandler(async (req, res) => {
+    const dados = z.object({ codigo: z.string().max(100) }).safeParse(req.body);
+    if (!dados.success) throw httpError(400, "Moldura inválida");
+    res.json(await equiparMolduraPortal(req.colaborador._id, dados.data.codigo));
   }),
 );
 

@@ -14,7 +14,7 @@ import { Colaborador } from "../models/Colaborador.js";
 import { Loja } from "../models/Loja.js";
 import { ROLES } from "../models/Usuario.js";
 import { resolverConquistasPortal } from "../services/conquistasService.js";
-import { tituloLojaPerfil, fundoLojaPerfil, mascoteLojaPerfil } from "../services/lojaPortalService.js";
+import { tituloLojaPerfil, fundoLojaPerfil, mascoteLojaPerfil, molduraLojaPerfil } from "../services/lojaPortalService.js";
 import { classificar, REGRAS } from "../services/regras.js";
 import mongoose from "mongoose";
 
@@ -1138,9 +1138,11 @@ function resumirColegaPortal(colaborador) {
     _id: colaborador._id,
     nome: colaborador.nome,
     cargo: colaborador.cargo || "",
+    tituloPerfil: tituloLojaPerfil(colaborador),
     avatarUrl: colaborador.avatarUrl || "",
     fundoPerfil: fundoLojaPerfil(colaborador),
     mascotePerfil: mascoteLojaPerfil(colaborador),
+    molduraPerfil: molduraLojaPerfil(colaborador),
     nivel: Number(colaborador.nivel || 1),
     pontuacao: Number(colaborador.pontuacao || 0),
     totalAuditorias: Number(colaborador.totalAuditorias || 0),
@@ -1160,6 +1162,7 @@ function montarCabecalhoPerfilPublicoColaborador(colaborador) {
     tiersConquistasExibidas: colaborador.tiersConquistasExibidas,
     tituloPerfil: titulo ? { nome: titulo.nome, cor: titulo.cor, icone: titulo.icone } : null,
     mascotePerfil: mascoteLojaPerfil(colaborador),
+    molduraPerfil: molduraLojaPerfil(colaborador),
     fundoPerfil: fundoLojaPerfil(colaborador),
     nivel: Number(colaborador.nivel || 1),
     pontuacao: Number(colaborador.pontuacao || 0),
@@ -1989,7 +1992,9 @@ router.get(
         cargo: 1,
         avatarUrl: 1,
         fundoPerfilCodigo: 1,
+        tituloPerfilCodigo: 1,
         mascotePerfilCodigo: 1,
+        molduraPerfilCodigo: 1,
         "itensLoja.codigo": 1,
         nivel: 1,
         pontuacao: 1,
@@ -2025,6 +2030,8 @@ router.get(
       return res.status(404).json({ error: "Colaborador não encontrado" });
     }
 
+    const loja = await Loja.findById(dados.colaborador.loja).select("nome").lean();
+
     const conquistas = await resolverConquistasPortal(dados.colaborador || {});
     const rankingGeral = await calcularRankingGeralPortal(
       req.escopoLojaId,
@@ -2033,7 +2040,10 @@ router.get(
 
     res.json({
       ...dados,
-      colaborador: montarCabecalhoPerfilPublicoColaborador(dados.colaborador),
+      colaborador: {
+        ...montarCabecalhoPerfilPublicoColaborador(dados.colaborador),
+        lojaNome: loja?.nome || "",
+      },
       conquistas,
       rankingGeral,
     });
