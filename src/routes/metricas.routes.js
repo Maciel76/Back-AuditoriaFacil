@@ -17,6 +17,8 @@ import { resolverConquistasPortal } from "../services/conquistasService.js";
 import { tituloLojaPerfil, fundoLojaPerfil, mascoteLojaPerfil, molduraLojaPerfil } from "../services/lojaPortalService.js";
 import { classificar, REGRAS } from "../services/regras.js";
 import mongoose from "mongoose";
+import { SystemConfig, CONFIG_DEFAULTS } from "../models/SystemConfig.js";
+import { resumirDesempenhoCorredores } from "../services/desempenhoCorredores.js";
 
 const router = Router();
 const FILTRO_ITENS_ATIVOS = { cancelada: { $ne: true } };
@@ -3576,6 +3578,66 @@ router.get(
 );
 
 // ============ RELATÓRIOS ============
+router.get(
+  "/relatorios/desempenho-colaboradores",
+  escopoLoja,
+  asyncHandler(async (req, res) => {
+    if (req.escopoLojaId && !mongoose.isValidObjectId(req.escopoLojaId)) {
+      return res.status(400).json({ error: "Loja inválida." });
+    }
+    if (req.query.tipo && !Object.values(TIPOS_AUDITORIA).includes(req.query.tipo)) {
+      return res.status(400).json({ error: "Tipo de auditoria inválido." });
+    }
+    if (req.query.periodo === "custom" && (!/^\d{4}-\d{2}-\d{2}$/.test(req.query.dataInicio || "") || !/^\d{4}-\d{2}-\d{2}$/.test(req.query.dataFim || "") || !dayjs(req.query.dataInicio).isValid() || !dayjs(req.query.dataFim).isValid() || req.query.dataInicio > req.query.dataFim)) {
+      return res.status(400).json({ error: "Informe um período válido." });
+    }
+    const escopo = req.escopoLojaId ? { loja: new mongoose.Types.ObjectId(req.escopoLojaId) } : {};
+    const matchBase = { ...escopo, ...FILTRO_ITENS_ATIVOS, ...(req.query.tipo ? { tipo: req.query.tipo } : {}) };
+    const { inicio, fim } = await intervaloPeriodo(req.query.periodo || "1d", {
+      dataInicio: req.query.dataInicio, dataFim: req.query.dataFim, model: AuditItem, match: matchBase,
+    });
+    const somenteConcluidas = [
+      { $lookup: { from: Auditoria.collection.name, localField: "_id.auditoria", foreignField: "_id", as: "auditoria" } },
+      { $match: { "auditoria.status": "CONCLUIDA", "auditoria.excluida": { $ne: true } } },
+      { $project: { auditoria: 0 } },
+    ];
+    const local = { $ifNull: [{ $trim: { input: { $ifNull: ["$local", ""] } } }, ""] };
+    const localNormalizado = { $cond: [{ $eq: [local, ""] }, "Sem corredor", local] };
+    const [linhas, referencias, config] = await Promise.all([
+      AuditItem.aggregate([
+        { $match: { ...matchBase, data: { $gte: inicio, $lte: fim } } },
+        { $group: { _id: {
+          auditoria: "$auditoria", loja: "$loja", data: "$data", tipo: "$tipo", local: localNormalizado,
+          situacao: "$situacao", colaborador: "$colaborador", codigo: "$colaboradorCodigo", nome: "$colaboradorNome",
+        }, total: { $sum: 1 } } },
+        ...somenteConcluidas,
+      ]),
+      !req.query.tipo || req.query.tipo === "RUPTURA" ? AuditItem.aggregate([
+        { $match: { ...escopo, ...FILTRO_ITENS_ATIVOS, tipo: "PRESENCA",
+          data: { $gte: dayjs(inicio).subtract(1, "day").startOf("day").toDate(), $lte: fim },
+          situacao: { $in: ["Com Presença e com Estoque", "Sem Presença e Com Estoque"] },
+        } },
+        { $group: { _id: { auditoria: "$auditoria", loja: "$loja", data: "$data", local: localNormalizado }, total: { $sum: 1 } } },
+        ...somenteConcluidas,
+      ]) : [],
+      SystemConfig.findOne({ chave: "global" }).select("metaPercentualRestante").lean(),
+    ]);
+    const meta = 100 - (config?.metaPercentualRestante ?? CONFIG_DEFAULTS.metaPercentualRestante);
+    const items = resumirDesempenhoCorredores(linhas, referencias, meta);
+    const ids = items.map((p) => p.colaboradorId).filter(Boolean);
+    const [pessoas, lojas] = await Promise.all([
+      Colaborador.find({ ...escopo, _id: { $in: ids } }).select("nome codigoExterno avatarUrl cargo setor").lean(),
+      Loja.find({ _id: { $in: [...new Set(items.map((p) => p.lojaId))] } }).select("nome").lean(),
+    ]);
+    const porId = new Map(pessoas.map((p) => [String(p._id), p]));
+    const porLoja = new Map(lojas.map((l) => [String(l._id), l.nome]));
+    res.json({ periodo: { inicio, fim }, meta, limiteAmarelo: Math.min(80, meta), items: items.map((p) => {
+      const perfil = porId.get(p.colaboradorId);
+      return { ...p, ...(perfil ? { nome: perfil.nome, codigoExterno: perfil.codigoExterno, avatarUrl: perfil.avatarUrl, cargo: perfil.cargo, setor: perfil.setor } : {}), lojaNome: porLoja.get(p.lojaId) || "Loja" };
+    }) });
+  }),
+);
+
 router.get(
   "/relatorios/situacoes",
   escopoLoja,
