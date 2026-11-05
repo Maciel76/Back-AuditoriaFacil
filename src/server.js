@@ -23,6 +23,8 @@ import lojaPortalRoutes from "./routes/lojaPortal.routes.js";
 import automacaoRoutes from "./routes/automacao.routes.js";
 import { Automacao, AutomacaoJob, ImportacaoLock } from "./models/Automacao.js";
 import whatsappRoutes from "./routes/whatsapp.routes.js";
+import dispositivosRoutes from "./routes/dispositivos.routes.js";
+import { Dispositivo } from "./models/Dispositivo.js";
 import {
   semearConquistasSeNecessario,
   sincronizarConquistasPadrao,
@@ -31,7 +33,7 @@ import { restaurarSessoes } from "./services/whatsappManager.js";
 
 async function bootstrap() {
   await connectDB();
-  await Promise.all([Automacao.init(), AutomacaoJob.init(), ImportacaoLock.init()]);
+  await Promise.all([Automacao.init(), AutomacaoJob.init(), ImportacaoLock.init(), Dispositivo.init()]);
 
   const existeAdmin = await Usuario.findOne({ role: ROLES.SUPER_ADMIN });
   if (!existeAdmin) {
@@ -97,6 +99,7 @@ async function bootstrap() {
   app.use("/api/admin/loja-portal", lojaPortalRoutes);
   app.use("/api/automacao", automacaoRoutes);
   app.use("/api/whatsapp", whatsappRoutes);
+  app.use("/api/dispositivos", dispositivosRoutes);
 
   app.use((req, res) =>
     res.status(404).json({ error: "Rota não encontrada", path: req.path }),
