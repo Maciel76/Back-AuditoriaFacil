@@ -84,10 +84,20 @@ router.get(
 router.use(autenticar);
 router.use(exigirRole(ROLES.SUPER_ADMIN));
 
-// Upload de imagem de tier (multipart/form-data)
+// Preserva os bytes originais, incluindo todos os quadros de GIFs animados.
+function receberImagemConquista(req, res, next) {
+  uploadConquistaImagem.single("imagem")(req, res, (err) => {
+    if (err?.code === "LIMIT_FILE_SIZE") {
+      return next(httpError(400, "A imagem ou GIF deve ter no máximo 10 MB"));
+    }
+    next(err);
+  });
+}
+
+// Upload de ícone ou imagem de tier (multipart/form-data)
 router.post(
   "/upload-imagem",
-  uploadConquistaImagem.single("imagem"),
+  receberImagemConquista,
   asyncHandler(async (req, res) => {
     if (!req.file) throw httpError(400, "Arquivo de imagem ausente");
     const url = `/uploads/conquistas/${req.file.filename}`;
