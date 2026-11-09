@@ -67,7 +67,7 @@ const conquistaDir = path.resolve(
 );
 if (!fs.existsSync(conquistaDir)) fs.mkdirSync(conquistaDir, { recursive: true });
 
-const CONQUISTA_MAX_BYTES = 3 * 1024 * 1024;
+const CONQUISTA_MAX_BYTES = 10 * 1024 * 1024;
 
 export const uploadConquistaImagem = multer({
   storage: multer.diskStorage({
@@ -90,7 +90,7 @@ export const uploadConquistaImagem = multer({
     const mimeType = (file.mimetype || "").toLowerCase();
     const ext = path.extname(file.originalname || "").toLowerCase();
     if (AVATAR_MIME_TYPES.has(mimeType) && AVATAR_EXTENSIONS.has(ext)) return cb(null, true);
-    cb(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 3 MB são aceitas"));
+    cb(Object.assign(new Error("Apenas imagens JPG, PNG, WEBP, GIF ou AVIF até 10 MB são aceitas"), { status: 400 }));
   },
 });
 
