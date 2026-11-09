@@ -19,6 +19,7 @@ import { classificar, REGRAS } from "../services/regras.js";
 import mongoose from "mongoose";
 import { SystemConfig, CONFIG_DEFAULTS } from "../models/SystemConfig.js";
 import { resumirDesempenhoCorredores } from "../services/desempenhoCorredores.js";
+import { carregarMetasLojas } from "../services/metasLojas.js";
 
 const router = Router();
 const FILTRO_ITENS_ATIVOS = { cancelada: { $ne: true } };
@@ -1885,6 +1886,7 @@ async function montarPerfilLoja({
     auditoriasNoPeriodo,
     auditoriasCanceladasNoPeriodo,
     ultimasAuditorias,
+    metasPorLoja,
   ] = await Promise.all([
     Colaborador.countDocuments({ loja: lojaObjectId, ativo: true }),
     Auditoria.countDocuments(filtroAuditoriasAtivas),
@@ -1893,6 +1895,7 @@ async function montarPerfilLoja({
       .sort({ data: -1, createdAt: -1 })
       .limit(6)
       .lean(),
+    carregarMetasLojas({ lojaIds: [lojaObjectId], inicio, fim, tipo }),
   ]);
 
   return {
@@ -1908,6 +1911,7 @@ async function montarPerfilLoja({
     auditoriasNoPeriodo,
     auditoriasCanceladasNoPeriodo,
     ultimasAuditorias,
+    metas: metasPorLoja.get(String(lojaObjectId)),
   };
 }
 
@@ -3320,6 +3324,14 @@ router.get(
 );
 
 // ============ RANKING DE LOJAS (visão global / super admin) ============
+async function adicionarMetasAoRanking(items, { inicio, fim, tipo }) {
+  const metasPorLoja = await carregarMetasLojas({
+    lojaIds: items.map((item) => new mongoose.Types.ObjectId(String(item._id))),
+    inicio, fim, tipo,
+  });
+  return items.map((item) => ({ ...item, metas: metasPorLoja.get(String(item._id)) }));
+}
+
 router.get(
   "/ranking/lojas",
   asyncHandler(async (req, res) => {
@@ -3342,6 +3354,7 @@ router.get(
       ) {
         items = items.filter((r) => String(r._id) === String(req.usuario.loja));
       }
+      items = await adicionarMetasAoRanking(items, { inicio, fim, tipo: tipoFilter });
       return res.json({ periodo: { inicio, fim }, items });
     }
 
@@ -3524,6 +3537,7 @@ router.get(
         (r) => String(r._id) === String(req.usuario.loja),
       );
     }
+    items = await adicionarMetasAoRanking(items, { inicio, fim, tipo: tipoFilter });
     res.json({ periodo: { inicio, fim }, items });
   }),
 );
