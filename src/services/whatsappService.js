@@ -391,6 +391,21 @@ export class WhatsappLojaService extends EventEmitter {
     });
   }
 
+  async enviarDocumentoParaGrupo(jid, buffer, nomeArquivo = "residuais.pdf", legenda = "") {
+    if (!this.socket || !this.conectado) throw new Error("WhatsApp desta loja não está conectado");
+    if (!isJidGroup(jid)) throw new Error(`"${jid}" não é um grupo do WhatsApp`);
+    if (!Buffer.isBuffer(buffer) || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
+      throw new Error("Documento PDF inválido");
+    }
+    const seguro = String(nomeArquivo).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+    await this.socket.sendMessage(jid, {
+      document: buffer,
+      mimetype: "application/pdf",
+      fileName: /\.pdf$/i.test(seguro) ? seguro : `${seguro}.pdf`,
+      caption: legenda || undefined,
+    });
+  }
+
   async enviarTextoParaGrupo(jid, texto) {
     if (!this.socket || !this.conectado) {
       throw new Error("WhatsApp desta loja não está conectado");

@@ -87,6 +87,7 @@ function projetarConexao(conexao, sessao) {
         !!conexao.compartilhamentoAuto?.incluirRelatorioCorredor,
       incluirRelatorioClasse:
         !!conexao.compartilhamentoAuto?.incluirRelatorioClasse,
+      incluirResiduais: !!conexao.compartilhamentoAuto?.incluirResiduais,
       legenda: conexao.compartilhamentoAuto?.legenda || "",
     },
   };
@@ -199,6 +200,7 @@ const configSchema = z
     incluirRanking: z.boolean().optional(),
     incluirRelatorioCorredor: z.boolean().optional(),
     incluirRelatorioClasse: z.boolean().optional(),
+    incluirResiduais: z.boolean().optional(),
     legenda: z.string().max(600).optional(),
   })
   .strict();
@@ -241,6 +243,7 @@ router.put(
       "incluirRanking",
       "incluirRelatorioCorredor",
       "incluirRelatorioClasse",
+      "incluirResiduais",
     ]) {
       if (typeof payload[campo] === "boolean") {
         conexao.compartilhamentoAuto[campo] = payload[campo];
@@ -277,15 +280,16 @@ const contextoSchema = z
     taxaConformidade: z.coerce.number().optional(),
     totalLidos: z.coerce.number().optional(),
     auditoriaId: z.string().optional(),
+    residuaisAuditoriaId: z.string().optional(),
     periodoCaptura: z.string().optional(),
   })
   .partial();
 
 /**
- * Recebe os painéis já renderizados pelo navegador e manda para os grupos.
+ * Recebe imagens e o PDF de residuais gerados pelo navegador e manda para os grupos.
  *
  * Cada arquivo vem no campo com o nome do painel ("dashboard", "ranking",
- * "relatorio-corredor", "relatorio-classe"). Com `teste=true` o envio ignora o
+ * "relatorio-corredor", "relatorio-classe", "residuais"). Com `teste=true` o envio ignora o
  * liga/desliga do automático — é o botão "enviar agora" da tela de conexão.
  */
 router.post(
@@ -295,12 +299,14 @@ router.post(
     const arquivos = req.files || {};
     const imagens = CHAVES_PAINEL.flatMap((chave) => {
       const arquivo = arquivos[chave]?.[0];
-      return arquivo?.buffer?.length
-        ? [{ chave, buffer: arquivo.buffer }]
-        : [];
+      if (!arquivo?.buffer?.length) return [];
+      if (chave === "residuais" && arquivo.buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
+        throw httpError(400, "Arquivo de residuais não é um PDF válido");
+      }
+      return [{ chave, buffer: arquivo.buffer, nomeArquivo: arquivo.originalname }];
     });
 
-    if (!imagens.length) throw httpError(400, "Nenhuma imagem recebida");
+    if (!imagens.length) throw httpError(400, "Nenhum arquivo recebido");
 
     let contexto = {};
     if (req.body?.contexto) {

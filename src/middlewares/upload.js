@@ -94,8 +94,8 @@ export const uploadConquistaImagem = multer({
   },
 });
 
-// ============ Upload de painéis para o WhatsApp (memoryStorage) ============
-// As imagens do dashboard/ranking/relatórios são geradas no navegador e só
+// ============ Upload de painéis e PDF para o WhatsApp (memoryStorage) ============
+// As imagens e o PDF dos residuais são gerados no navegador e só
 // passam pelo servidor a caminho do grupo — não ficam em disco.
 const PAINEL_MAX_BYTES = 12 * 1024 * 1024;
 
@@ -104,6 +104,10 @@ export const uploadPaineis = multer({
   limits: { fileSize: PAINEL_MAX_BYTES, files: 6 },
   fileFilter: (_req, file, cb) => {
     const mimeType = (file.mimetype || "").toLowerCase();
+    if (file.fieldname === "residuais") {
+      if (mimeType === "application/pdf" && /\.pdf$/i.test(file.originalname || "")) return cb(null, true);
+      return cb(Object.assign(new Error("Residuais deve ser enviado como PDF"), { status: 400 }));
+    }
     if (mimeType === "image/png" || mimeType === "image/jpeg") {
       return cb(null, true);
     }

@@ -31,6 +31,12 @@ export const PAINEIS = Object.freeze([
     titulo: "Relatório por classe",
     flag: "incluirRelatorioClasse",
   },
+  {
+    chave: "residuais",
+    titulo: "Residuais (PDF)",
+    flag: "incluirResiduais",
+    formato: "pdf",
+  },
 ]);
 
 export const CHAVES_PAINEL = PAINEIS.map((p) => p.chave);
@@ -87,7 +93,7 @@ export function montarLegenda(template, contexto, nomeLoja) {
 }
 
 /**
- * Manda as imagens da auditoria para os grupos configurados da loja.
+ * Manda imagens e PDF da auditoria para os grupos configurados da loja.
  *
  * Não lança quando um grupo recusa a mensagem: um grupo que virou
  * "só admins" não pode impedir os outros de receberem, e o upload da planilha
@@ -122,14 +128,16 @@ export async function compartilharPaineis({
 
   // Mantém a ordem de PAINEIS e descarta painel desligado ou desconhecido.
   const ordenadas = PAINEIS.flatMap((painel) => {
+    // O PDF é uma opção nova: configurações antigas não o enviam implicitamente.
+    if (painel.chave === "residuais" && !ignorarFlags && config.incluirResiduais !== true) return [];
     if (!ignorarFlags && config[painel.flag] === false) return [];
     const imagem = imagens.find((img) => img.chave === painel.chave);
     if (!imagem?.buffer?.length) return [];
-    return [{ ...painel, buffer: imagem.buffer }];
+    return [{ ...painel, buffer: imagem.buffer, nomeArquivo: imagem.nomeArquivo }];
   });
 
   if (!ordenadas.length) {
-    return { enviado: false, motivo: "Nenhuma imagem para enviar" };
+    return { enviado: false, motivo: "Nenhum arquivo para enviar" };
   }
 
   const loja = await Loja.findById(lojaId).select("nome").lean();
@@ -142,11 +150,11 @@ export async function compartilharPaineis({
       // nome do painel para o grupo saber o que está olhando.
       const textoImagem = indice === 0 ? legenda : `*${painel.titulo}*`;
       try {
-        await sessao.enviarImagemParaGrupo(
-          grupo.jid,
-          painel.buffer,
-          textoImagem,
-        );
+        if (painel.formato === "pdf") {
+          await sessao.enviarDocumentoParaGrupo(grupo.jid, painel.buffer, painel.nomeArquivo || "residuais.pdf", textoImagem);
+        } else {
+          await sessao.enviarImagemParaGrupo(grupo.jid, painel.buffer, textoImagem);
+        }
         resultados.push({
           grupo: grupo.nome || grupo.jid,
           painel: painel.chave,

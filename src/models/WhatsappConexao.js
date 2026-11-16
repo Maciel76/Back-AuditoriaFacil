@@ -70,6 +70,7 @@ const WhatsappConexaoSchema = new mongoose.Schema(
       incluirRanking: { type: Boolean, default: true },
       incluirRelatorioCorredor: { type: Boolean, default: false },
       incluirRelatorioClasse: { type: Boolean, default: false },
+      incluirResiduais: { type: Boolean, default: false },
       // Legenda da primeira imagem. Placeholders: {loja} {data} {tipo}
       // {taxa} {itens}. Vazio = usa o texto padrão do serviço.
       legenda: { type: String, default: "", maxlength: 600 },

@@ -20,6 +20,7 @@ Sistema multi-tenant para gestão de **auditorias de loja** (Etiqueta, Presença
 - **Gamificação**: níveis (1 + ⌊pontos/500⌋), conquistas (`PRIMEIRA_AUDITORIA`, `CEM_LIDOS`, `MIL_LIDOS`, `DEZ_MIL_LIDOS`, `CONFORMIDADE_95`, `NIVEL_5`).
 - **Dashboards** com KPIs, gráficos de linha, doughnut e barras.
 - **Relatórios** por situação e por setor.
+- **Residuais** por loja e auditoria, com QR codes dos códigos dos produtos, quantidade em estoque, busca por corredor e impressão de etiquetas A4. Inclui somente estoque maior que zero e menor que 10, com mais de 10 dias sem venda. Exclui as classes bazar, cigarro, whisky (incluindo whiskey, wisky e wisker) e vinho, tanto na classe raiz quanto na subclasse. Os valores são os da planilha da auditoria selecionada; produtos sem estoque ou dias sem venda informados ficam de fora.
 - **Página de perfil do colaborador** com histórico, conquistas e gráficos.
 
 ---
@@ -158,6 +159,8 @@ GET    /api/auditorias/:id
 GET    /api/auditorias/:id/itens?situacao=&conforme=&q=&page=&limit=
 DELETE /api/auditorias/:id
 
+GET    /api/residuais?lojaId=&auditoriaId=  auditoria concluída com dados de estoque e dias sem venda
+
 GET    /api/metricas/dashboard?periodo=7d|30d|90d|mes|ano
 GET    /api/metricas/ranking/colaboradores
 GET    /api/metricas/ranking/lojas
@@ -219,6 +222,28 @@ Nenhuma. As imagens sao geradas no navegador e passam pelo servidor so a
 caminho do grupo: o multer usa `memoryStorage()`, entao elas existem apenas em
 memoria durante a requisicao e nada e gravado em disco.
 
+### Residuais em PDF no WhatsApp
+
+Na página **WhatsApp**, em **Conteúdo enviado**, marque **Residuais (PDF)** e
+salve. Com o compartilhamento automático ativo, cada upload concluído gera e
+envia o PDF aos mesmos grupos das imagens. A opção começa desligada.
+
+O documento usa os dados da auditoria recém-importada e os mesmos critérios da
+tela Residuais, sem acumular estoques de dias diferentes. O período escolhido
+para as imagens não altera o PDF. Se não houver produtos elegíveis, envia uma
+página informando isso; dados de estoque ou dias sem venda ausentes também são
+indicados. O teste manual usa a referência automática da tela Residuais e o
+reenvio preserva o identificador da auditoria usada no PDF anterior.
+
+O PDF é gerado no navegador e transmitido como documento `application/pdf`,
+somente em memória. Uma falha no PDF não impede o envio das imagens. Para
+verificar o transporte e as configurações sem enviar mensagens reais:
+
+```bash
+cd backend
+node --test test/whatsapp-residuais.test.js
+```
+
 O botao **Reenviar** nao guarda imagem para depois — ele manda o navegador
 gerar tudo de novo, com o mesmo recorte do envio anterior (mesma auditoria,
 mesmo tipo, mesmo periodo). O que fica no banco e so a ficha do ultimo envio
@@ -227,6 +252,22 @@ mesmo tipo, mesmo periodo). O que fica no banco e so a ficha do ultimo envio
 ---
 
 ## 🧪 Validação do parser (sem MongoDB)
+
+As regras e a API dos residuais podem ser verificadas sem banco externo:
+
+```bash
+cd backend
+node --test test/residuais.test.js
+```
+
+O menu **Residuais** escolhe, entre as 60 auditorias concluídas mais recentes da loja,
+a última com estoque e dias sem venda informados. Também permite escolher a referência
+manualmente. Quando nenhuma tem esses campos, mostra a mais recente com o aviso dos
+dados ausentes. O QR code contém somente o código do produto,
+preservando zeros à esquerda. **Imprimir filtrados** inclui todos os resultados da
+busca, inclusive de outras páginas; **Selecionados** imprime os produtos marcados
+que correspondem aos filtros atuais. O navegador também permite salvar a impressão
+em PDF. Use papel A4 e escala 100%.
 
 Coloque planilhas reais na raiz do projeto e rode:
 ```bash

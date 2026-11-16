@@ -24,6 +24,7 @@ import automacaoRoutes from "./routes/automacao.routes.js";
 import { Automacao, AutomacaoJob, ImportacaoLock } from "./models/Automacao.js";
 import whatsappRoutes from "./routes/whatsapp.routes.js";
 import dispositivosRoutes from "./routes/dispositivos.routes.js";
+import residuaisRoutes from "./routes/residuais.routes.js";
 import { Dispositivo } from "./models/Dispositivo.js";
 import {
   semearConquistasSeNecessario,
@@ -100,6 +101,7 @@ async function bootstrap() {
   app.use("/api/automacao", automacaoRoutes);
   app.use("/api/whatsapp", whatsappRoutes);
   app.use("/api/dispositivos", dispositivosRoutes);
+  app.use("/api/residuais", residuaisRoutes);
 
   app.use((req, res) =>
     res.status(404).json({ error: "Rota não encontrada", path: req.path }),
